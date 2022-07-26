@@ -41,7 +41,7 @@ impl AsBool for u8 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TagUpdate {
     Time,
     State,
@@ -67,7 +67,7 @@ impl TagUpdate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConnectionType {
     First,
     Reconnect,
@@ -93,7 +93,7 @@ impl ConnectionType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Content {
     Unknown,
     Init {
@@ -362,7 +362,7 @@ impl Content {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Packet {
     pub id: Uuid,
     pub content: Content,

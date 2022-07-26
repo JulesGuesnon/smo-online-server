@@ -1,27 +1,31 @@
-use super::packet::Packet;
-use tokio::{io::AsyncWriteExt, net::tcp::WriteHalf, sync::Mutex};
+use crate::packet::{Content, Packet};
+use tokio::{
+    io::{AsyncWriteExt, WriteHalf},
+    net::TcpStream,
+    sync::Mutex,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Default)]
 pub struct Costume {
-    body: String,
-    cap: String,
+    pub body: String,
+    pub cap: String,
 }
 
-pub struct Player<'a> {
+pub struct Player {
     pub id: Uuid,
     pub connected: bool,
-    pub costume: Costume,
+    pub costume: Option<Costume>,
     pub name: String,
-    socket: Mutex<WriteHalf<'a>>,
+    socket: Mutex<WriteHalf<TcpStream>>,
 }
 
-impl<'a> Player<'a> {
-    pub fn new(socket: WriteHalf<'a>) -> Self {
+impl Player {
+    pub fn new(socket: WriteHalf<TcpStream>) -> Self {
         Self {
             id: Uuid::new_v4(),
             connected: false,
-            costume: Costume::default(),
+            costume: None,
             name: "".to_string(),
             socket: Mutex::new(socket),
         }
@@ -47,5 +51,9 @@ impl<'a> Player<'a> {
 
     pub fn set_id(&mut self, new_id: Uuid) {
         self.id = new_id;
+    }
+
+    pub fn set_costume(&mut self, body: String, cap: String) {
+        self.costume = Some(Costume { body, cap });
     }
 }

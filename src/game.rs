@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Position {
     x: f32,
     y: f32,
@@ -31,7 +31,7 @@ impl Position {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Quaternion {
     w: f32,
     x: f32,
