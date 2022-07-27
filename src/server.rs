@@ -198,7 +198,10 @@ impl Server {
 
         // TODO: Find out when peers & players are cleaned
         let mut peers = self.peers.write().await;
-        peers.entry(id).and_modify(|peer| peer.connected = false);
+        let mut peer = peers.get_mut(&id).expect("Peer is supposed to be here");
+
+        peer.connected = false;
+        peer.disconnect().await;
 
         Ok(())
     }

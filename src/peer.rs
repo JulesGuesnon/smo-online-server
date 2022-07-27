@@ -36,8 +36,4 @@ impl Peer {
         // TODO: Handle error
         let _ = socket.write_all(&packet.serialize()).await;
     }
-
-    pub fn set_id(&mut self, new_id: Uuid) {
-        self.id = new_id;
-    }
 }
