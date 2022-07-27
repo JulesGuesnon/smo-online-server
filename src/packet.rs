@@ -1,4 +1,3 @@
-use super::game::{Position, Quaternion};
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::ops::Range;
@@ -12,6 +11,63 @@ pub const HEADER_SIZE: usize = 20;
 const COSTUME_SIZE: usize = 0x20;
 const STAGE_ID_SIZE: usize = 0x10;
 const STAGE_SIZE: usize = 0x30;
+
+#[derive(Debug, Clone)]
+pub struct Position {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+impl Position {
+    pub fn as_bytes(&self) -> Bytes {
+        let mut bytes = BytesMut::new();
+
+        bytes.put_f32(self.x);
+        bytes.put_f32(self.y);
+        bytes.put_f32(self.z);
+
+        bytes.into()
+    }
+
+    pub fn from_bytes(mut bytes: Bytes) -> Self {
+        Self {
+            x: bytes.get_f32(),
+            y: bytes.get_f32(),
+            z: bytes.get_f32(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Quaternion {
+    w: f32,
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+impl Quaternion {
+    pub fn as_bytes(&self) -> Bytes {
+        let mut bytes = BytesMut::new();
+
+        bytes.put_f32(self.x);
+        bytes.put_f32(self.y);
+        bytes.put_f32(self.z);
+        bytes.put_f32(self.w);
+
+        bytes.into()
+    }
+
+    pub fn from_bytes(mut bytes: Bytes) -> Self {
+        Self {
+            x: bytes.get_f32(),
+            y: bytes.get_f32(),
+            z: bytes.get_f32(),
+            w: bytes.get_f32(),
+        }
+    }
+}
 
 trait AsByte {
     fn as_byte(&self) -> u8;
@@ -371,13 +427,6 @@ pub struct Packet {
 impl Packet {
     pub fn new(id: Uuid, content: Content) -> Self {
         Self { id, content }
-    }
-
-    pub fn default() -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            content: Content::Init { max_player: 12 },
-        }
     }
 
     pub fn serialize(&self) -> Vec<u8> {

@@ -1,8 +1,8 @@
-use crate::player;
+use crate::{peer::Peer, players::Players};
 
 use super::{
     packet::{ConnectionType, Content, Header, Packet, HEADER_SIZE},
-    player::Player,
+    players::Player,
 };
 use anyhow::anyhow;
 use anyhow::Result;
@@ -14,25 +14,26 @@ use tokio::{
     net::TcpStream,
     sync::RwLock,
 };
-use uuid::Uuid;
-
 use tracing::{debug, info};
+use uuid::Uuid;
 
 const MAX_PLAYER: i16 = 10;
 
-struct Server {
-    players: RwLock<HashMap<Uuid, Player>>,
+pub struct Server {
+    peers: RwLock<HashMap<Uuid, Peer>>,
+    players: Players,
 }
 
 impl Server {
     pub fn new() -> Self {
         Self {
-            players: RwLock::default(),
+            peers: RwLock::default(),
+            players: Players::new(),
         }
     }
 
     async fn broadcast(&self, packet: Packet) {
-        let players = self.players.read().await;
+        let players = self.peers.read().await;
 
         join_all(
             players
@@ -46,17 +47,16 @@ impl Server {
     pub async fn handle_connection(&self, socket: TcpStream) -> Result<()> {
         let (mut reader, writer) = split(socket);
 
-        let mut player = Player::new(writer);
-        let mut player_id = player.id.clone();
+        let peer = Peer::new(writer);
+        let id = peer.id.clone();
 
-        player
-            .send(Packet::new(
-                player.id,
-                Content::Init {
-                    max_player: MAX_PLAYER,
-                },
-            ))
-            .await;
+        peer.send(Packet::new(
+            peer.id,
+            Content::Init {
+                max_player: MAX_PLAYER,
+            },
+        ))
+        .await;
 
         let packet = receive_packet(&mut reader).await?;
 
@@ -68,67 +68,46 @@ impl Server {
             return Err(anyhow!("Didn't receive connection packet as first packet"));
         }
 
-        let players = self.players.read().await;
+        let peers = self.peers.read().await;
 
-        let connected_players = players
+        let connected_peers = peers
             .iter()
             .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
 
-        if connected_players == MAX_PLAYER {
+        if connected_peers == MAX_PLAYER {
             info!("Player {} couldn't join server is full", packet.id);
             return Err(anyhow!("Server full"));
         }
 
-        drop(players);
+        drop(peers);
 
-        let mut players = self.players.write().await;
+        let mut peers = self.peers.write().await;
 
         // Remove stales clients and only keep the disconnected one
-        let old_player = players.remove(&packet.id);
+        let _ = peers.remove(&packet.id);
 
-        match (packet.content, old_player) {
-            (_, Some(old_player)) => {
-                debug!(
-                    "Found an old client {}, player {} reconnecting to it",
-                    old_player.id, player.id
-                );
+        match packet.content {
+            Content::Connect {
+                type_: ConnectionType::First,
+                max_player: _,
+                client,
+            } => {
+                // Verify if it needs to be packet.id
+                debug!("Client {} with id {} is joining", client, id);
 
-                player.set_id(old_player.id);
-                player.set_name(old_player.name);
+                let player = Player::new(id, client);
 
-                players.insert(packet.id, player);
-                ()
+                let _ = self.players.add(player).await;
             }
-            (
-                Content::Connect {
-                    type_: ConnectionType::First,
-                    max_player: _,
-                    client,
-                },
-                None,
-            ) => {
-                debug!("Client {} with id {} is joining", client, player.id);
-                player.set_id(packet.id);
-                player_id = packet.id;
-                player.set_name(client);
+            Content::Connect {
+                type_: ConnectionType::Reconnect,
+                max_player: _,
+                client: _,
+            } => {
+                // Verify if player exist
+                debug!("Client {} attempting to reconnect", id);
 
-                players.insert(packet.id, player);
-                ()
-            }
-            (
-                Content::Connect {
-                    type_: ConnectionType::Reconnect,
-                    max_player: _,
-                    client,
-                },
-                None,
-            ) => {
-                debug!(
-                    "Client {} attempted to reconnect but there was no matching player",
-                    player.id
-                );
-                player.set_name(client);
-                players.insert(packet.id, player);
+                peers.insert(id, peer);
             }
             _ => {
                 debug!("This case isn't supposed to be reach");
@@ -136,60 +115,90 @@ impl Server {
             }
         }
 
-        let players = self.players.read().await;
+        let peers = self.peers.read().await;
 
-        let player = players
-            .get(&player_id)
+        let peer = peers
+            .get(&id)
             .ok_or(anyhow!("Player is supposed to be in the HashMap"))?;
 
-        for (uuid, p) in self.players.read().await.iter() {
-            if *uuid != player_id {
-                let _ = player
+        for (uuid, peer) in self.peers.read().await.iter() {
+            if *uuid == id {
+                continue;
+            }
+
+            let player = self
+                .players
+                .get(uuid)
+                .await
+                .expect("Peers and Players are desynchronized");
+
+            let player = player.read().await;
+
+            let _ = peer
+                .send(Packet::new(
+                    player.id,
+                    Content::Connect {
+                        type_: ConnectionType::First,
+                        max_player: MAX_PLAYER as u16,
+                        client: player.name.clone(),
+                    },
+                ))
+                .await;
+
+            if let Some(costume) = &player.costume {
+                let _ = peer
                     .send(Packet::new(
-                        p.id,
-                        Content::Connect {
-                            type_: ConnectionType::First,
-                            max_player: MAX_PLAYER as u16,
-                            client: p.name.clone(),
+                        player.id,
+                        Content::Costume {
+                            body: costume.body.clone(),
+                            cap: costume.cap.clone(),
                         },
                     ))
                     .await;
-
-                if let Some(costume) = &p.costume {
-                    let _ = player
-                        .send(Packet::new(
-                            p.id,
-                            Content::Costume {
-                                body: costume.body.clone(),
-                                cap: costume.cap.clone(),
-                            },
-                        ))
-                        .await;
-                }
             }
+
+            drop(player);
         }
 
-        drop(player);
-        drop(players);
+        drop(peer);
+        drop(peers);
+
+        let player = self
+            .players
+            .get(&id)
+            .await
+            .expect("Player is supposed to be here");
 
         loop {
             let packet = receive_packet(&mut reader).await?;
 
+            if packet.id != id {
+                debug!("Id mismatch: received {} - expecting {}", packet.id, id);
+
+                return Err(anyhow!(
+                    "Id mismatch: received {} - expecting {}",
+                    packet.id,
+                    id
+                ));
+            }
             // TODO: Implement packet handler
             match &packet.content {
                 Content::Costume { body, cap } => {
-                    let mut players = self.players.write().await;
-                    let player = players
-                        .get_mut(&player_id)
-                        .ok_or(anyhow!("Player is supposed to be in the HashMap"))?;
+                    let mut player = player.write().await;
 
                     player.set_costume(body.clone(), cap.clone());
+                    drop(player);
                 }
+                Content::Disconnect => break,
                 _ => (),
             }
 
             self.broadcast(packet).await;
         }
+
+        // TODO: Find out when peers & players are cleaned
+        let mut peers = self.peers.write().await;
+        peers.entry(id).and_modify(|peer| peer.connected = false);
 
         Ok(())
     }
@@ -199,8 +208,8 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
     let mut header_buf = [0; HEADER_SIZE];
 
     match reader.read_exact(&mut header_buf).await {
-        Ok(n) if n == 0 => return Err(anyhow!("End of file reached")),
-        Ok(n) => (),
+        Ok(n) if n == 0 => return Ok(Packet::new(Uuid::nil(), Content::Disconnect)),
+        Ok(_) => (),
         Err(e) => {
             debug!("Error reading header {}", e);
             return Err(anyhow!(e));
@@ -219,7 +228,7 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
 
         match reader.read_exact(&mut body_buf).await {
             Ok(n) if n == 0 => return Err(anyhow!("End of file reached")),
-            Ok(n) => (),
+            Ok(_) => (),
             Err(e) => {
                 debug!("Error reading header {}", e);
                 return Err(anyhow!(e));

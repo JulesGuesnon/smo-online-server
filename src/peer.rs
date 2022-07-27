@@ -1,4 +1,4 @@
-use crate::packet::{Content, Packet};
+use crate::packet::Packet;
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
@@ -6,27 +6,19 @@ use tokio::{
 };
 use uuid::Uuid;
 
-#[derive(Debug, Default)]
-pub struct Costume {
-    pub body: String,
-    pub cap: String,
-}
-
-pub struct Player {
+pub struct Peer {
     pub id: Uuid,
     pub connected: bool,
-    pub costume: Option<Costume>,
-    pub name: String,
     socket: Mutex<WriteHalf<TcpStream>>,
 }
 
-impl Player {
+// Player -> Player
+// State related stuff -> Game state: Arc<RwLock<HashMap<Uuid, RwLock<State>>>>
+impl Peer {
     pub fn new(socket: WriteHalf<TcpStream>) -> Self {
         Self {
             id: Uuid::new_v4(),
             connected: false,
-            costume: None,
-            name: "".to_string(),
             socket: Mutex::new(socket),
         }
     }
@@ -45,15 +37,7 @@ impl Player {
         let _ = socket.write_all(&packet.serialize()).await;
     }
 
-    pub fn set_name(&mut self, new_name: String) {
-        self.name = new_name;
-    }
-
     pub fn set_id(&mut self, new_id: Uuid) {
         self.id = new_id;
-    }
-
-    pub fn set_costume(&mut self, body: String, cap: String) {
-        self.costume = Some(Costume { body, cap });
     }
 }

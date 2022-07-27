@@ -1,12 +1,12 @@
-use tokio::{
-    io,
-    net::{TcpListener, TcpStream},
-};
+use std::sync::Arc;
+
+use server::Server;
+use tokio::{io, net::TcpListener};
 use tracing::debug;
 
-mod game;
 mod packet;
-mod player;
+mod peer;
+mod players;
 mod server;
 
 #[tokio::main]
@@ -15,12 +15,17 @@ async fn main() -> io::Result<()> {
 
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
 
+    let server = Arc::new(Server::new());
+
     loop {
         let (socket, _) = listener.accept().await?;
+        let server = server.clone();
 
         tokio::spawn(async move {
             match socket.set_nodelay(true) {
-                Ok(_) => handle_connection(socket).await,
+                Ok(_) => {
+                    let _ = server.handle_connection(socket);
+                }
                 Err(_) => {
                     debug!("Couldn't set NODELAY to socket, dropping it");
                     drop(socket)
@@ -28,8 +33,4 @@ async fn main() -> io::Result<()> {
             };
         });
     }
-}
-
-async fn handle_connection(mut socket: TcpStream) {
-    let (reader, writer) = socket.split();
 }
