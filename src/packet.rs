@@ -431,19 +431,6 @@ impl Packet {
 
         [id, &type_[..], &size.to_be_bytes(), body].concat()
     }
-
-    pub fn deserialize(bytes: Bytes) -> Result<Self> {
-        let b_id = bytes.slice(ID_RANGE)[..].try_into()?;
-        let type_ = bytes.slice(TYPE_RANGE).get_i16();
-        let size = bytes.slice(SIZE_RANGE).get_i16() as usize;
-
-        let body = bytes.slice(HEADER_SIZE..(HEADER_SIZE + size));
-
-        Ok(Self {
-            id: Uuid::from_bytes(b_id),
-            content: Content::deserialize(type_, body)?,
-        })
-    }
 }
 
 pub struct Header {

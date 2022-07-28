@@ -15,7 +15,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf},
     net::TcpStream,
     sync::RwLock,
@@ -24,13 +24,11 @@ use tokio::{
 use tracing::{debug, info};
 use uuid::Uuid;
 
-const MAX_PLAYER: i16 = 10;
-
 pub struct Server {
     peers: RwLock<HashMap<Uuid, Peer>>,
     shine_bag: RwLock<HashSet<i32>>,
     players: Players,
-    settings: Settings,
+    pub settings: Settings,
 }
 
 impl Server {
@@ -88,7 +86,7 @@ impl Server {
         peer.send(Packet::new(
             peer.id,
             Content::Init {
-                max_player: MAX_PLAYER,
+                max_player: self.settings.server.max_players,
             },
         ))
         .await;
@@ -109,7 +107,7 @@ impl Server {
             .iter()
             .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
 
-        if connected_peers == MAX_PLAYER {
+        if connected_peers == self.settings.server.max_players {
             info!("Player {} couldn't join server is full", packet.id);
             return Err(anyhow!("Server full"));
         }
@@ -179,7 +177,7 @@ impl Server {
                     player.id,
                     Content::Connect {
                         type_: ConnectionType::First,
-                        max_player: MAX_PLAYER as u16,
+                        max_player: self.settings.server.max_players as u16,
                         client: player.name.clone(),
                     },
                 ))
@@ -281,7 +279,7 @@ impl Server {
                         }
                     }
 
-                    if self.settings.is_merge_enabled {
+                    if self.settings.scenario.merge_enabled {
                         self.broadcast_map(packet.clone(), |player, packet| async move {
                             match packet.content {
                                 Content::Game {
@@ -481,7 +479,7 @@ impl Server {
             .ban_list
             .ips
             .iter()
-            .find(|addr| **addr == peer.ip)
+            .find(|addr| **addr == peer.ip.ip())
             .is_some();
 
         let is_id_banned = self
@@ -576,23 +574,34 @@ impl Server {
         .await;
     }
 
-    pub async fn load_shines(&self) {
+    pub async fn load_shines(&self) -> Result<()> {
         if !self.settings.persist_shines.enabled {
-            return;
+            info!("Moons sync is disabled");
+            return Ok(());
         }
 
-        let mut file = File::open(&self.settings.persist_shines.file_name)
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&self.settings.persist_shines.file_name)
             .await
-            .expect("Shine file can't be opened");
+            .expect("Settings couldn't be loaded or created");
 
         let mut content = String::from("");
-        let _ = file.read_to_string(&mut content).await;
+        file.read_to_string(&mut content).await?;
 
         let deserialized = serde_json::from_str(&content).unwrap();
 
         let mut shines = self.shine_bag.write().await;
 
+        info!(
+            "Moons loaded from {}",
+            self.settings.persist_shines.file_name
+        );
         *shines = deserialized;
+
+        Ok(())
     }
 }
 

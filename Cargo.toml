@@ -11,9 +11,10 @@ tokio-stream = "0.1"
 futures = "0.3.21"
 tracing = "0.1"
 tracing-subscriber = "0.2"
-uuid = {version = "1.1.2", features = ["v4"] }
+uuid = {version = "1.1.2", features = ["v4", "serde"] }
 bytes = "1.2.0"
 anyhow = "1.0.58"
 chrono = "0.4.19"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 glam = "0.21.2"
