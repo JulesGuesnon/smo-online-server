@@ -1,4 +1,8 @@
-use crate::{peer::Peer, players::Players};
+use crate::{
+    peer::Peer,
+    players::{Players, SharedPlayer},
+    settings::Settings,
+};
 
 use super::{
     packet::{ConnectionType, Content, Header, Packet, HEADER_SIZE},
@@ -7,7 +11,7 @@ use super::{
 use anyhow::anyhow;
 use anyhow::Result;
 use bytes::Bytes;
-use futures::future::join_all;
+use futures::{future::join_all, Future};
 use std::collections::HashMap;
 use tokio::{
     io::{split, AsyncReadExt, ReadHalf},
@@ -22,21 +26,23 @@ const MAX_PLAYER: i16 = 10;
 pub struct Server {
     peers: RwLock<HashMap<Uuid, Peer>>,
     players: Players,
+    settings: Settings,
 }
 
 impl Server {
-    pub fn new() -> Self {
+    pub fn new(settings: Settings) -> Self {
         Self {
             peers: RwLock::default(),
             players: Players::new(),
+            settings,
         }
     }
 
     async fn broadcast(&self, packet: Packet) {
-        let players = self.peers.read().await;
+        let peers = self.peers.read().await;
 
         join_all(
-            players
+            peers
                 .iter()
                 .filter(|(_, p)| p.connected && p.id != packet.id)
                 .map(|(_, p)| p.send(packet.clone())),
@@ -44,10 +50,34 @@ impl Server {
         .await;
     }
 
+    async fn broadcast_map<F, Fut>(&self, packet: Packet, map: F)
+    where
+        F: Fn(SharedPlayer, Packet) -> Fut,
+        Fut: Future<Output = Packet>,
+    {
+        let peers = self.peers.read().await;
+
+        join_all(
+            peers
+                .iter()
+                .filter(|(_, p)| p.connected && p.id != packet.id)
+                .map(|(_, peer)| async {
+                    let packet = match self.players.get(&packet.id).await {
+                        Some(p) => (map)(p, packet.clone()).await,
+                        None => packet.clone(),
+                    };
+
+                    peer.send(packet).await;
+                }),
+        )
+        .await;
+    }
+
     pub async fn handle_connection(&self, socket: TcpStream) -> Result<()> {
+        let ip = socket.peer_addr()?;
         let (mut reader, writer) = split(socket);
 
-        let peer = Peer::new(writer);
+        let mut peer = Peer::new(ip, writer);
         let id = peer.id.clone();
 
         peer.send(Packet::new(
@@ -86,28 +116,33 @@ impl Server {
         // Remove stales clients and only keep the disconnected one
         let _ = peers.remove(&packet.id);
 
-        match packet.content {
-            Content::Connect {
-                type_: ConnectionType::First,
-                max_player: _,
-                client,
-            } => {
-                // Verify if it needs to be packet.id
-                debug!("Client {} with id {} is joining", client, id);
-
-                let player = Player::new(id, client);
-
-                let _ = self.players.add(player).await;
-            }
-            Content::Connect {
-                type_: ConnectionType::Reconnect,
-                max_player: _,
-                client: _,
-            } => {
-                // Verify if player exist
+        match (packet.content, self.players.get(&packet.id).await) {
+            // Player already exist so reconnecting
+            (_, Some(_)) => {
                 debug!("Client {} attempting to reconnect", id);
 
-                peers.insert(id, peer);
+                peer.id = packet.id;
+                peers.insert(packet.id, peer);
+            }
+            // Player doesn't exist so we create it
+            (
+                Content::Connect {
+                    type_: _,
+                    max_player: _,
+                    client,
+                },
+                None,
+            ) => {
+                debug!("Client {} with id {} is joining", client, packet.id);
+                peer.id = packet.id;
+
+                let player = Player::new(packet.id, client);
+
+                let _ = self.players.add(player).await;
+
+                let peer = self.on_new_peer(peer).await?;
+
+                peers.insert(packet.id, peer);
             }
             _ => {
                 debug!("This case isn't supposed to be reach");
@@ -181,7 +216,7 @@ impl Server {
                     id
                 ));
             }
-            // TODO: Implement packet handler
+
             match &packet.content {
                 Content::Costume { body, cap } => {
                     let mut player = player.write().await;
@@ -189,6 +224,68 @@ impl Server {
                     player.set_costume(body.clone(), cap.clone());
                     drop(player);
                 }
+                Content::Game {
+                    is_2d,
+                    scenario,
+                    stage,
+                } => {
+                    let mut player = player.write().await;
+
+                    player.scenario = Some(*scenario);
+                    player.is_2d = *is_2d;
+                    player.last_game_packet = Some(packet.clone());
+
+                    if stage == "CapWorldHomeStage" && *scenario == 0 {
+                        player.is_speedrun = true;
+                        player.shine_sync = vec![];
+                        player.persist_shines().await;
+                        info!("Entered Cap on new save, preventing moon sync until Cascade");
+                    } else if stage == "WaterfallWorldHomeStage" {
+                        let was_speedrun = player.is_speedrun;
+                        player.is_speedrun = false;
+
+                        if was_speedrun {
+                            // TODO:
+                            // Task.Run(async () => {
+                            //     c.Logger.Info("Entered Cascade with moon sync disabled, enabling moon sync");
+                            //     await Task.Delay(15000);
+                            //     await ClientSyncShineBag(c);
+                            // });
+                        }
+                    }
+
+                    if self.settings.is_merge_enabled {
+                        self.broadcast_map(packet.clone(), |player, packet| async move {
+                            match packet.content {
+                                Content::Game {
+                                    is_2d,
+                                    scenario: _,
+                                    stage,
+                                } => {
+                                    let player = player.read().await;
+
+                                    let scenario = player.scenario.unwrap_or(200);
+                                    Packet::new(
+                                        packet.id,
+                                        Content::Game {
+                                            is_2d,
+                                            scenario,
+                                            stage,
+                                        },
+                                    )
+                                }
+                                _ => packet,
+                            }
+                        })
+                        .await;
+                    }
+                }
+                Content::Tag {
+                    update_type,
+                    is_it,
+                    seconds,
+                    minutes,
+                } => (),
                 Content::Disconnect => break,
                 _ => (),
             }
@@ -204,6 +301,45 @@ impl Server {
         peer.disconnect().await;
 
         Ok(())
+    }
+
+    async fn on_new_peer(&self, peer: Peer) -> Result<Peer> {
+        let is_ip_banned = self
+            .settings
+            .ban_list
+            .ips
+            .iter()
+            .find(|addr| **addr == peer.ip)
+            .is_some();
+
+        let is_id_banned = self
+            .settings
+            .ban_list
+            .ids
+            .iter()
+            .find(|addr| **addr == peer.id)
+            .is_some();
+
+        if is_id_banned || is_ip_banned {
+            info!(
+                "Banned player {} with ip {} tried to joined",
+                peer.ip, peer.id
+            );
+
+            Err(anyhow!(
+                "Banned player {} with ip {} tried to joined",
+                peer.ip,
+                peer.id
+            ))
+        } else {
+            let packets = self.players.get_last_game_packets().await;
+
+            for packet in packets {
+                peer.send(packet).await;
+            }
+
+            Ok(peer)
+        }
     }
 }
 

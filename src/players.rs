@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::packet::Packet;
+use futures::future::join_all;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -14,11 +15,11 @@ pub struct Player {
     pub id: Uuid,
     pub costume: Option<Costume>,
     pub name: String,
-    pub scenario: u8,
+    pub scenario: Option<u8>,
     pub is_2d: bool,
     pub is_speedrun: bool,
     pub is_seeking: bool,
-    pub last_packet: Option<Packet>,
+    pub last_game_packet: Option<Packet>,
     pub shine_sync: Vec<u32>,
     pub loaded_save: bool,
 }
@@ -31,13 +32,14 @@ impl Player {
             id,
             costume: None,
             name,
-            scenario: 0,
+            scenario: None,
             is_2d: false,
             is_speedrun: false,
             is_seeking: false,
-            last_packet: None,
+            last_game_packet: None,
             shine_sync: Vec::new(),
             loaded_save: false,
+            // TODO: Add time
         }
     }
 }
@@ -46,9 +48,11 @@ impl Player {
     pub fn set_costume(&mut self, body: String, cap: String) {
         self.costume = Some(Costume { body, cap });
     }
+
+    pub async fn persist_shines(&self) {}
 }
 
-type SharedPlayer = Arc<RwLock<Player>>;
+pub type SharedPlayer = Arc<RwLock<Player>>;
 pub struct Players {
     players: RwLock<HashMap<Uuid, SharedPlayer>>,
 }
@@ -70,6 +74,17 @@ impl Players {
         let mut players = self.players.write().await;
 
         players.remove(id)
+    }
+
+    pub async fn get_last_game_packets(&self) -> Vec<Packet> {
+        let players = self.players.read().await;
+
+        let players = join_all(players.iter().map(|(_, p)| p.read())).await;
+
+        players
+            .iter()
+            .filter_map(|p| p.last_game_packet.clone())
+            .collect()
     }
 
     pub async fn add(&self, player: Player) -> SharedPlayer {

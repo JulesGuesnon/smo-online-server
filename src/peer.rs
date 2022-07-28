@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use crate::packet::Packet;
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
@@ -8,6 +10,7 @@ use uuid::Uuid;
 
 pub struct Peer {
     pub id: Uuid,
+    pub ip: SocketAddr,
     pub connected: bool,
     socket: Mutex<WriteHalf<TcpStream>>,
 }
@@ -15,10 +18,11 @@ pub struct Peer {
 // Player -> Player
 // State related stuff -> Game state: Arc<RwLock<HashMap<Uuid, RwLock<State>>>>
 impl Peer {
-    pub fn new(socket: WriteHalf<TcpStream>) -> Self {
+    pub fn new(ip: SocketAddr, socket: WriteHalf<TcpStream>) -> Self {
         Self {
             id: Uuid::new_v4(),
-            connected: false,
+            ip,
+            connected: true,
             socket: Mutex::new(socket),
         }
     }
