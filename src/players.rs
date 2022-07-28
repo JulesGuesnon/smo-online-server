@@ -8,6 +8,9 @@ use std::{
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+const MARIO_SIZE: f32 = 160.;
+const MARIO_SIZE_2D: f32 = 180.;
+
 #[derive(Debug, Default)]
 pub struct Costume {
     pub body: String,
@@ -28,8 +31,6 @@ pub struct Player {
     pub time: Duration,
 }
 
-// Player -> Player
-// State related stuff -> Game state: Arc<RwLock<HashMap<Uuid, RwLock<State>>>>
 impl Player {
     pub fn new(id: Uuid, name: String) -> Self {
         Self {
@@ -51,6 +52,14 @@ impl Player {
 impl Player {
     pub fn set_costume(&mut self, body: String, cap: String) {
         self.costume = Some(Costume { body, cap });
+    }
+
+    pub fn size(&self) -> f32 {
+        if self.is_2d {
+            MARIO_SIZE_2D
+        } else {
+            MARIO_SIZE
+        }
     }
 }
 

@@ -155,6 +155,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "781aa11be58ef14b0cd7326618afcbd9cdb5ba686bdab7193d87cdc322cd7033"
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -418,6 +424,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
+ "glam",
  "serde_json",
  "tokio",
  "tokio-stream",

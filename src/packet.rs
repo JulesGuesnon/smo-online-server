@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use glam::{Quat, Vec3};
 use std::ops::Range;
 use std::str::from_utf8;
 use uuid::Uuid;
@@ -12,15 +13,13 @@ const COSTUME_SIZE: usize = 0x20;
 const STAGE_ID_SIZE: usize = 0x10;
 const STAGE_SIZE: usize = 0x30;
 
-#[derive(Debug, Clone)]
-pub struct Position {
-    x: f32,
-    y: f32,
-    z: f32,
+trait AsBytes {
+    fn as_bytes(&self) -> Bytes;
+    fn from_bytes(bytes: Bytes) -> Self;
 }
 
-impl Position {
-    pub fn as_bytes(&self) -> Bytes {
+impl AsBytes for Vec3 {
+    fn as_bytes(&self) -> Bytes {
         let mut bytes = BytesMut::new();
 
         bytes.put_f32(self.x);
@@ -30,7 +29,7 @@ impl Position {
         bytes.into()
     }
 
-    pub fn from_bytes(mut bytes: Bytes) -> Self {
+    fn from_bytes(mut bytes: Bytes) -> Self {
         Self {
             x: bytes.get_f32(),
             y: bytes.get_f32(),
@@ -39,16 +38,8 @@ impl Position {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Quaternion {
-    w: f32,
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-impl Quaternion {
-    pub fn as_bytes(&self) -> Bytes {
+impl AsBytes for Quat {
+    fn as_bytes(&self) -> Bytes {
         let mut bytes = BytesMut::new();
 
         bytes.put_f32(self.x);
@@ -59,7 +50,7 @@ impl Quaternion {
         bytes.into()
     }
 
-    pub fn from_bytes(mut bytes: Bytes) -> Self {
+    fn from_bytes(mut bytes: Bytes) -> Self {
         Self {
             x: bytes.get_f32(),
             y: bytes.get_f32(),
@@ -156,15 +147,15 @@ pub enum Content {
         max_player: i16,
     },
     Player {
-        position: Position,
-        quaternion: Quaternion,
+        position: Vec3,
+        quaternion: Quat,
         animation_blend_weights: Vec<f32>,
         act: u16,
         subact: u16,
     },
     Cap {
-        position: Position,
-        quaternion: Quaternion,
+        position: Vec3,
+        quaternion: Quat,
         cap_out: bool,
         cap_anim: String,
     },
@@ -343,8 +334,8 @@ impl Content {
                 max_player: i16::from_be_bytes(body[..].try_into()?),
             },
             2 => Self::Player {
-                position: Position::from_bytes(body.slice(0..12)),
-                quaternion: Quaternion::from_bytes(body.slice(12..28)),
+                position: Vec3::from_bytes(body.slice(0..12)),
+                quaternion: Quat::from_bytes(body.slice(12..28)),
                 animation_blend_weights: body
                     .slice(28..52)
                     .chunks(4)
@@ -354,8 +345,8 @@ impl Content {
                 subact: body.slice(54..56).get_u16(),
             },
             3 => Self::Cap {
-                position: Position::from_bytes(body.slice(0..12)),
-                quaternion: Quaternion::from_bytes(body.slice(12..28)),
+                position: Vec3::from_bytes(body.slice(0..12)),
+                quaternion: Quat::from_bytes(body.slice(12..28)),
                 cap_out: if body.slice(28..32).get_u32() == 1 {
                     true
                 } else {

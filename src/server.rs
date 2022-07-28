@@ -9,6 +9,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use chrono::Duration;
 use futures::{future::join_all, Future};
+use glam::{Mat4, Quat, Vec3};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -221,7 +222,7 @@ impl Server {
                 ));
             }
 
-            match &packet.content {
+            let should_broadcast = match &packet.content {
                 Content::Costume { body, cap } => {
                     let mut player = player.write().await;
 
@@ -236,6 +237,8 @@ impl Server {
                             let _ = server.sync_player_shine_bag(id).await;
                         }
                     });
+
+                    true
                 }
                 Content::Game {
                     is_2d,
@@ -302,6 +305,10 @@ impl Server {
                             }
                         })
                         .await;
+
+                        false
+                    } else {
+                        true
                     }
                 }
                 Content::Tag {
@@ -313,6 +320,8 @@ impl Server {
                     let mut player = player.write().await;
 
                     player.is_seeking = *is_it;
+
+                    true
                 }
                 Content::Tag {
                     update_type: TagUpdate::Time,
@@ -324,6 +333,8 @@ impl Server {
 
                     player.time =
                         Duration::minutes(*minutes as i64) + Duration::seconds(*seconds as i64);
+
+                    true
                 }
                 Content::Shine { id } => {
                     let mut player = player.write().await;
@@ -344,10 +355,103 @@ impl Server {
                             });
                         }
                     }
+
+                    true
+                }
+                Content::Player {
+                    position,
+                    quaternion,
+                    animation_blend_weights,
+                    act,
+                    subact,
+                } if self.settings.flip_in(&packet.id) => {
+                    let size = player.read().await.size();
+
+                    tokio::spawn({
+                        let server = self.clone();
+
+                        let id = packet.id.clone();
+                        let position = position.clone();
+                        let quaternion = quaternion.clone();
+                        let animation_blend_weights = animation_blend_weights.clone();
+                        let act = act.clone();
+                        let subact = subact.clone();
+
+                        let position = position + Vec3::Y * size;
+                        let quaternion = quaternion
+                            * Quat::from_mat4(&Mat4::from_rotation_x(std::f32::consts::PI))
+                            * Quat::from_mat4(&Mat4::from_rotation_y(std::f32::consts::PI));
+
+                        async move {
+                            server
+                                .broadcast(Packet::new(
+                                    id,
+                                    Content::Player {
+                                        position,
+                                        quaternion,
+                                        animation_blend_weights,
+                                        act,
+                                        subact,
+                                    },
+                                ))
+                                .await;
+                        }
+                    });
+
+                    false
+                }
+                Content::Player {
+                    position,
+                    quaternion,
+                    animation_blend_weights,
+                    act,
+                    subact,
+                } if self.settings.flip_not_in(&packet.id) => {
+                    let size = player.read().await.size();
+
+                    tokio::spawn({
+                        let server = self.clone();
+
+                        let id = packet.id.clone();
+                        let position = position.clone();
+                        let quaternion = quaternion.clone();
+                        let animation_blend_weights = animation_blend_weights.clone();
+                        let act = act.clone();
+                        let subact = subact.clone();
+
+                        async move {
+                            server
+                                .broadcast_map(packet.clone(), |player, packet| async {
+                                    let position = position + Vec3::Y * size;
+                                    let quaternion = quaternion
+                                        * Quat::from_mat4(&Mat4::from_rotation_x(
+                                            std::f32::consts::PI,
+                                        ))
+                                        * Quat::from_mat4(&Mat4::from_rotation_y(
+                                            std::f32::consts::PI,
+                                        ));
+
+                                    Packet::new(
+                                        id,
+                                        Content::Player {
+                                            position,
+                                            quaternion,
+                                            animation_blend_weights: animation_blend_weights
+                                                .clone(),
+                                            act: act.clone(),
+                                            subact: subact.clone(),
+                                        },
+                                    )
+                                })
+                                .await
+                        }
+                    });
+
+                    false
                 }
                 Content::Disconnect => break,
-                _ => (),
-            }
+                _ => true,
+            };
 
             self.broadcast(packet).await;
         }
