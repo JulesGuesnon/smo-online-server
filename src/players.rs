@@ -1,7 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
-
 use crate::packet::Packet;
+use chrono::Duration;
 use futures::future::join_all;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -20,8 +23,9 @@ pub struct Player {
     pub is_speedrun: bool,
     pub is_seeking: bool,
     pub last_game_packet: Option<Packet>,
-    pub shine_sync: Vec<u32>,
+    pub shine_sync: HashSet<i32>,
     pub loaded_save: bool,
+    pub time: Duration,
 }
 
 // Player -> Player
@@ -37,9 +41,9 @@ impl Player {
             is_speedrun: false,
             is_seeking: false,
             last_game_packet: None,
-            shine_sync: Vec::new(),
+            shine_sync: HashSet::new(),
             loaded_save: false,
-            // TODO: Add time
+            time: Duration::zero(),
         }
     }
 }
@@ -48,8 +52,6 @@ impl Player {
     pub fn set_costume(&mut self, body: String, cap: String) {
         self.costume = Some(Costume { body, cap });
     }
-
-    pub async fn persist_shines(&self) {}
 }
 
 pub type SharedPlayer = Arc<RwLock<Player>>;
@@ -68,6 +70,12 @@ impl Players {
         let players = self.players.read().await;
 
         players.get(id).map(|p| p.clone())
+    }
+
+    pub async fn all_ids(&self) -> Vec<Uuid> {
+        let players = self.players.read().await;
+
+        players.keys().map(|k| k.clone()).collect()
     }
 
     pub async fn remove(&self, id: &Uuid) -> Option<SharedPlayer> {

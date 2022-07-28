@@ -21,6 +21,8 @@ async fn main() -> io::Result<()> {
 
     let server = Arc::new(Server::new(settings));
 
+    server.load_shines().await;
+
     loop {
         let (socket, _) = listener.accept().await?;
         let server = server.clone();
@@ -28,7 +30,7 @@ async fn main() -> io::Result<()> {
         tokio::spawn(async move {
             match socket.set_nodelay(true) {
                 Ok(_) => {
-                    let _ = server.handle_connection(socket);
+                    let _ = server.handle_connection(socket).await;
                 }
                 Err(_) => {
                     debug!("Couldn't set NODELAY to socket, dropping it");

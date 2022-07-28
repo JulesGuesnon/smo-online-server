@@ -8,6 +8,12 @@ pub struct BanList {
     pub ips: Vec<SocketAddr>,
 }
 
+#[derive(Default)]
+pub struct PersistShines {
+    pub enabled: bool,
+    pub file_name: String,
+}
+
 impl BanList {
     pub fn new(ids: Vec<Uuid>, ips: Vec<SocketAddr>) -> Self {
         Self { ids, ips }
@@ -18,4 +24,5 @@ impl BanList {
 pub struct Settings {
     pub ban_list: BanList,
     pub is_merge_enabled: bool,
+    pub persist_shines: PersistShines,
 }

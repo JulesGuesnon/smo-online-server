@@ -1,22 +1,24 @@
 use crate::{
+    packet::{ConnectionType, Content, Header, Packet, TagUpdate, HEADER_SIZE},
     peer::Peer,
-    players::{Players, SharedPlayer},
+    players::{Player, Players, SharedPlayer},
     settings::Settings,
-};
-
-use super::{
-    packet::{ConnectionType, Content, Header, Packet, HEADER_SIZE},
-    players::Player,
 };
 use anyhow::anyhow;
 use anyhow::Result;
 use bytes::Bytes;
+use chrono::Duration;
 use futures::{future::join_all, Future};
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::{
-    io::{split, AsyncReadExt, ReadHalf},
+    fs::File,
+    io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf},
     net::TcpStream,
     sync::RwLock,
+    time::sleep,
 };
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -25,6 +27,7 @@ const MAX_PLAYER: i16 = 10;
 
 pub struct Server {
     peers: RwLock<HashMap<Uuid, Peer>>,
+    shine_bag: RwLock<HashSet<i32>>,
     players: Players,
     settings: Settings,
 }
@@ -33,6 +36,7 @@ impl Server {
     pub fn new(settings: Settings) -> Self {
         Self {
             peers: RwLock::default(),
+            shine_bag: RwLock::default(),
             players: Players::new(),
             settings,
         }
@@ -73,7 +77,7 @@ impl Server {
         .await;
     }
 
-    pub async fn handle_connection(&self, socket: TcpStream) -> Result<()> {
+    pub async fn handle_connection(self: Arc<Self>, socket: TcpStream) -> Result<()> {
         let ip = socket.peer_addr()?;
         let (mut reader, writer) = split(socket);
 
@@ -222,7 +226,16 @@ impl Server {
                     let mut player = player.write().await;
 
                     player.set_costume(body.clone(), cap.clone());
-                    drop(player);
+                    player.loaded_save = true;
+
+                    tokio::spawn({
+                        let server = self.clone();
+                        let id = player.id.clone();
+
+                        async move {
+                            let _ = server.sync_player_shine_bag(id).await;
+                        }
+                    });
                 }
                 Content::Game {
                     is_2d,
@@ -237,20 +250,31 @@ impl Server {
 
                     if stage == "CapWorldHomeStage" && *scenario == 0 {
                         player.is_speedrun = true;
-                        player.shine_sync = vec![];
-                        player.persist_shines().await;
+                        player.shine_sync.clear();
+                        let mut shine_bag = self.shine_bag.write().await;
+
+                        shine_bag.clear();
+
+                        self.persist_shines().await;
+
                         info!("Entered Cap on new save, preventing moon sync until Cascade");
                     } else if stage == "WaterfallWorldHomeStage" {
                         let was_speedrun = player.is_speedrun;
                         player.is_speedrun = false;
 
                         if was_speedrun {
-                            // TODO:
-                            // Task.Run(async () => {
-                            //     c.Logger.Info("Entered Cascade with moon sync disabled, enabling moon sync");
-                            //     await Task.Delay(15000);
-                            //     await ClientSyncShineBag(c);
-                            // });
+                            let id = player.id.clone();
+
+                            tokio::spawn({
+                                let server = self.clone();
+                                async move {
+                                    info!(
+                                    "Entered Cascade with moon sync disabled, enabling moon sync"
+                                );
+                                    sleep(std::time::Duration::from_secs(15)).await;
+                                    let _ = server.sync_player_shine_bag(id).await;
+                                }
+                            });
                         }
                     }
 
@@ -281,11 +305,46 @@ impl Server {
                     }
                 }
                 Content::Tag {
-                    update_type,
+                    update_type: TagUpdate::State,
                     is_it,
+                    seconds: _,
+                    minutes: _,
+                } => {
+                    let mut player = player.write().await;
+
+                    player.is_seeking = *is_it;
+                }
+                Content::Tag {
+                    update_type: TagUpdate::Time,
+                    is_it: _,
                     seconds,
                     minutes,
-                } => (),
+                } => {
+                    let mut player = player.write().await;
+
+                    player.time =
+                        Duration::minutes(*minutes as i64) + Duration::seconds(*seconds as i64);
+                }
+                Content::Shine { id } => {
+                    let mut player = player.write().await;
+
+                    if player.loaded_save {
+                        let mut shine_bag = self.shine_bag.write().await;
+
+                        shine_bag.insert(id.clone());
+                        if player.shine_sync.get(id).is_none() {
+                            info!("Got moon {}", id);
+                            player.shine_sync.insert(id.clone());
+
+                            tokio::spawn({
+                                let server = self.clone();
+                                async move {
+                                    server.sync_shine_bag().await;
+                                }
+                            });
+                        }
+                    }
+                }
                 Content::Disconnect => break,
                 _ => (),
             }
@@ -340,6 +399,87 @@ impl Server {
 
             Ok(peer)
         }
+    }
+
+    async fn sync_player_shine_bag(&self, id: Uuid) -> Result<()> {
+        let player = self
+            .players
+            .get(&id)
+            .await
+            .ok_or(anyhow!("Couldn't find player"))?;
+
+        let mut player = player.write().await;
+
+        if player.is_speedrun {
+            return Err(anyhow!("Player is in speedrun mode"));
+        }
+
+        let bag = self.shine_bag.read().await;
+        let peers = self.peers.read().await;
+        let peer = peers.get(&id).ok_or(anyhow!("Couldn't find peer"))?;
+
+        for shine in bag.difference(&player.shine_sync.clone()) {
+            player.shine_sync.insert(shine.clone());
+            peer.send(Packet::new(
+                id.clone(),
+                Content::Shine { id: shine.clone() },
+            ))
+            .await
+        }
+
+        Ok(())
+    }
+
+    async fn persist_shines(&self) {
+        if !self.settings.persist_shines.enabled {
+            return;
+        }
+
+        let shines = self.shine_bag.read().await;
+
+        let shines = shines.clone();
+        let file_name = self.settings.persist_shines.file_name.clone();
+
+        tokio::spawn(async move {
+            let serialized = serde_json::to_string(&shines).unwrap();
+
+            let mut file = File::open(file_name)
+                .await
+                .expect("Shine file can't be opened");
+
+            let _ = file.write_all(serialized.as_bytes()).await;
+        });
+    }
+
+    async fn sync_shine_bag(&self) {
+        self.persist_shines().await;
+        join_all(
+            self.players
+                .all_ids()
+                .await
+                .into_iter()
+                .map(|id| self.sync_player_shine_bag(id)),
+        )
+        .await;
+    }
+
+    pub async fn load_shines(&self) {
+        if !self.settings.persist_shines.enabled {
+            return;
+        }
+
+        let mut file = File::open(&self.settings.persist_shines.file_name)
+            .await
+            .expect("Shine file can't be opened");
+
+        let mut content = String::from("");
+        let _ = file.read_to_string(&mut content).await;
+
+        let deserialized = serde_json::from_str(&content).unwrap();
+
+        let mut shines = self.shine_bag.write().await;
+
+        *shines = deserialized;
     }
 }
 
