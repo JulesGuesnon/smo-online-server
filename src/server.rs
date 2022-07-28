@@ -401,47 +401,54 @@ impl Server {
                     false
                 }
                 Content::Player {
-                    position,
-                    quaternion,
-                    animation_blend_weights,
-                    act,
-                    subact,
+                    position: _,
+                    quaternion: _,
+                    animation_blend_weights: _,
+                    act: _,
+                    subact: _,
                 } if self.settings.flip_not_in(&packet.id) => {
-                    let size = player.read().await.size();
-
                     tokio::spawn({
                         let server = self.clone();
 
-                        let id = packet.id.clone();
-                        let position = position.clone();
-                        let quaternion = quaternion.clone();
-                        let animation_blend_weights = animation_blend_weights.clone();
-                        let act = act.clone();
-                        let subact = subact.clone();
+                        let packet = packet.clone();
 
                         async move {
                             server
-                                .broadcast_map(packet.clone(), |player, packet| async {
-                                    let position = position + Vec3::Y * size;
-                                    let quaternion = quaternion
-                                        * Quat::from_mat4(&Mat4::from_rotation_x(
-                                            std::f32::consts::PI,
-                                        ))
-                                        * Quat::from_mat4(&Mat4::from_rotation_y(
-                                            std::f32::consts::PI,
-                                        ));
-
-                                    Packet::new(
-                                        id,
+                                .broadcast_map(packet, |player, packet| async move {
+                                    match packet.content {
                                         Content::Player {
                                             position,
                                             quaternion,
-                                            animation_blend_weights: animation_blend_weights
-                                                .clone(),
-                                            act: act.clone(),
-                                            subact: subact.clone(),
-                                        },
-                                    )
+                                            animation_blend_weights,
+                                            act,
+                                            subact,
+                                        } => {
+                                            let player = player.read().await;
+                                            let size = player.size();
+                                            drop(player);
+
+                                            let position = position + Vec3::Y * size;
+                                            let quaternion = quaternion
+                                                * Quat::from_mat4(&Mat4::from_rotation_x(
+                                                    std::f32::consts::PI,
+                                                ))
+                                                * Quat::from_mat4(&Mat4::from_rotation_y(
+                                                    std::f32::consts::PI,
+                                                ));
+
+                                            Packet::new(
+                                                id,
+                                                Content::Player {
+                                                    position,
+                                                    quaternion,
+                                                    animation_blend_weights,
+                                                    act,
+                                                    subact,
+                                                },
+                                            )
+                                        }
+                                        _ => packet,
+                                    }
                                 })
                                 .await
                         }
@@ -453,7 +460,9 @@ impl Server {
                 _ => true,
             };
 
-            self.broadcast(packet).await;
+            if should_broadcast {
+                self.broadcast(packet).await;
+            }
         }
 
         // TODO: Find out when peers & players are cleaned
