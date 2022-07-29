@@ -22,18 +22,18 @@ impl AsBytes for Vec3 {
     fn as_bytes(&self) -> Bytes {
         let mut bytes = BytesMut::new();
 
-        bytes.put_f32(self.x);
-        bytes.put_f32(self.y);
-        bytes.put_f32(self.z);
+        bytes.put_f32_le(self.x);
+        bytes.put_f32_le(self.y);
+        bytes.put_f32_le(self.z);
 
         bytes.into()
     }
 
     fn from_bytes(mut bytes: Bytes) -> Self {
         Self {
-            x: bytes.get_f32(),
-            y: bytes.get_f32(),
-            z: bytes.get_f32(),
+            x: bytes.get_f32_le(),
+            y: bytes.get_f32_le(),
+            z: bytes.get_f32_le(),
         }
     }
 }
@@ -42,20 +42,20 @@ impl AsBytes for Quat {
     fn as_bytes(&self) -> Bytes {
         let mut bytes = BytesMut::new();
 
-        bytes.put_f32(self.x);
-        bytes.put_f32(self.y);
-        bytes.put_f32(self.z);
-        bytes.put_f32(self.w);
+        bytes.put_f32_le(self.x);
+        bytes.put_f32_le(self.y);
+        bytes.put_f32_le(self.z);
+        bytes.put_f32_le(self.w);
 
         bytes.into()
     }
 
     fn from_bytes(mut bytes: Bytes) -> Self {
         Self {
-            x: bytes.get_f32(),
-            y: bytes.get_f32(),
-            z: bytes.get_f32(),
-            w: bytes.get_f32(),
+            x: bytes.get_f32_le(),
+            y: bytes.get_f32_le(),
+            z: bytes.get_f32_le(),
+            w: bytes.get_f32_le(),
         }
     }
 }
@@ -123,8 +123,8 @@ pub enum ConnectionType {
 impl ConnectionType {
     fn from_u32(byte: u32) -> Result<Self> {
         match byte {
-            1 => Ok(Self::First),
-            2 => Ok(Self::Reconnect),
+            0 => Ok(Self::First),
+            1 => Ok(Self::Reconnect),
             b => Err(anyhow::anyhow!(
                 "Invalid byte '{}', couldn't convert it to ConnectionType",
                 b
@@ -157,7 +157,7 @@ pub enum Content {
         position: Vec3,
         quaternion: Quat,
         cap_out: bool,
-        cap_anim: String,
+        cap_anim: Vec<u8>,
     },
     Game {
         is_2d: bool,
@@ -182,6 +182,7 @@ pub enum Content {
     },
     Shine {
         id: i32,
+        is_grand: bool,
     },
     Capture {
         model: String,
@@ -217,7 +218,7 @@ impl Content {
         let id = match self {
             Self::Unknown => 0i16,
             Self::Init { max_player } => {
-                body.put_i16(max_player.clone());
+                body.put_i16_le(max_player.clone());
 
                 1
             }
@@ -233,11 +234,11 @@ impl Content {
                 body.put(Bytes::from(
                     animation_blend_weights
                         .into_iter()
-                        .flat_map(|v| v.to_be_bytes())
+                        .flat_map(|v| v.to_le_bytes())
                         .collect::<Vec<u8>>(),
                 ));
-                body.put_u16(act.clone());
-                body.put_u16(subact.clone());
+                body.put_u16_le(act.clone());
+                body.put_u16_le(subact.clone());
 
                 2
             }
@@ -249,9 +250,9 @@ impl Content {
             } => {
                 body.put(position.as_bytes());
                 body.put(quaternion.as_bytes());
-                // C# encodes bool in 4 bytes
-                body.put_u32(if *cap_out { 1 } else { 0 });
-                body.put(Self::serialize_string(cap_anim.clone(), 0x30));
+                body.put_u8(cap_out.as_byte());
+                // body.put(Self::serialize_string(cap_anim.clone(), 0x30));
+                body.put(&cap_anim[..]);
 
                 3
             }
@@ -260,7 +261,6 @@ impl Content {
                 scenario,
                 stage,
             } => {
-                // C# encodes bool in 4 bytes, but here I don't get why it's 1 byte
                 body.put_u8(is_2d.as_byte());
                 body.put_u8(scenario.clone());
                 body.put(Self::serialize_string(stage.clone(), 0x40));
@@ -274,10 +274,9 @@ impl Content {
                 minutes,
             } => {
                 body.put_u8(update_type.as_byte());
-                // C# encodes bool in 4 bytes, but here I don't get why it's 1 byte
                 body.put_u8(is_it.as_byte());
                 body.put_u8(seconds.clone());
-                body.put_u16(minutes.clone());
+                body.put_u16_le(minutes.clone());
 
                 5
             }
@@ -286,8 +285,8 @@ impl Content {
                 max_player,
                 client,
             } => {
-                body.put_u32(type_.as_u32());
-                body.put_u16(max_player.clone());
+                body.put_u32_le(type_.as_u32());
+                body.put_u16_le(max_player.clone());
                 body.put(Self::serialize_string(client.clone(), COSTUME_SIZE));
                 6
             }
@@ -300,8 +299,9 @@ impl Content {
                 body.put(Self::serialize_string(cap.clone(), COSTUME_SIZE));
                 8
             }
-            Self::Shine { id } => {
+            Self::Shine { id, is_grand } => {
                 body.put_i32(id.clone());
+                body.put_u8(is_grand.as_byte());
                 9
             }
             Self::Capture { model } => {
@@ -323,7 +323,7 @@ impl Content {
             }
         };
 
-        let id = id.to_be_bytes().to_vec();
+        let id = id.to_le_bytes().to_vec();
 
         (Bytes::from(id), body.into())
     }
@@ -331,7 +331,7 @@ impl Content {
     fn deserialize(id: i16, body: Bytes) -> Result<Self> {
         let packet = match id {
             1 => Self::Init {
-                max_player: i16::from_be_bytes(body[..].try_into()?),
+                max_player: i16::from_le_bytes(body[..].try_into()?),
             },
             2 => Self::Player {
                 position: Vec3::from_bytes(body.slice(0..12)),
@@ -339,20 +339,16 @@ impl Content {
                 animation_blend_weights: body
                     .slice(28..52)
                     .chunks(4)
-                    .map(|mut chunk| chunk.get_f32())
+                    .map(|mut chunk| chunk.get_f32_le())
                     .collect(),
-                act: body.slice(52..54).get_u16(),
-                subact: body.slice(54..56).get_u16(),
+                act: body.slice(52..54).get_u16_le(),
+                subact: body.slice(54..56).get_u16_le(),
             },
             3 => Self::Cap {
                 position: Vec3::from_bytes(body.slice(0..12)),
                 quaternion: Quat::from_bytes(body.slice(12..28)),
-                cap_out: if body.slice(28..32).get_u32() == 1 {
-                    true
-                } else {
-                    false
-                },
-                cap_anim: Self::deserialize_string(body.slice(32..80))?,
+                cap_out: body.slice(28..29).get_u8().as_bool(),
+                cap_anim: body.slice(29..(29 + 0x30)).to_vec(),
             },
             4 => Self::Game {
                 is_2d: body.slice(0..1).get_u8().as_bool(),
@@ -363,11 +359,11 @@ impl Content {
                 update_type: TagUpdate::from_byte(body.slice(0..1).get_u8())?,
                 is_it: body.slice(1..2).get_u8().as_bool(),
                 seconds: body.slice(2..3).get_u8(),
-                minutes: body.slice(3..5).get_u16(),
+                minutes: body.slice(3..5).get_u16_le(),
             },
             6 => Self::Connect {
-                type_: ConnectionType::from_u32(body.slice(0..4).get_u32())?,
-                max_player: body.slice(4..6).get_u16(),
+                type_: ConnectionType::from_u32(body.slice(0..4).get_u32_le())?,
+                max_player: body.slice(4..6).get_u16_le(),
                 client: Self::deserialize_string(body.slice(6..COSTUME_SIZE))?,
             },
             7 => Self::Disconnect,
@@ -376,7 +372,8 @@ impl Content {
                 cap: Self::deserialize_string(body.slice(COSTUME_SIZE..(COSTUME_SIZE * 2)))?,
             },
             9 => Self::Shine {
-                id: body.slice(..).get_i32(),
+                id: body.slice(..4).get_i32_le(),
+                is_grand: body.slice(4..5).get_u8().as_bool(),
             },
             10 => Self::Capture {
                 model: Self::deserialize_string(body.slice(0..COSTUME_SIZE))?,
@@ -407,6 +404,13 @@ impl Content {
             _ => false,
         }
     }
+
+    pub fn is_disconnect(&self) -> bool {
+        match self {
+            Self::Disconnect => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -420,7 +424,7 @@ impl Packet {
         Self { id, content }
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn as_bytes(&self) -> Vec<u8> {
         let id: &[u8] = &self.id.into_bytes();
 
         let (type_, body) = self.content.serialize();
@@ -429,10 +433,11 @@ impl Packet {
 
         let size = body.len() as i16;
 
-        [id, &type_[..], &size.to_be_bytes(), body].concat()
+        [id, &type_[..], &size.to_le_bytes(), body].concat()
     }
 }
 
+#[derive(Debug)]
 pub struct Header {
     pub id: Uuid,
     pub type_: i16,
@@ -442,8 +447,8 @@ pub struct Header {
 impl Header {
     pub fn from_bytes(bytes: Bytes) -> Result<Self> {
         let b_id = bytes.slice(ID_RANGE)[..].try_into()?;
-        let type_ = bytes.slice(TYPE_RANGE).get_i16();
-        let packet_size = bytes.slice(SIZE_RANGE).get_i16() as usize;
+        let type_ = bytes.slice(TYPE_RANGE).get_i16_le();
+        let packet_size = bytes.slice(SIZE_RANGE).get_i16_le() as usize;
 
         Ok(Self {
             id: Uuid::from_bytes(b_id),
@@ -453,9 +458,8 @@ impl Header {
     }
 
     pub fn make_packet(&self, body: Bytes) -> Result<Packet> {
-        Ok(Packet::new(
-            self.id,
-            Content::deserialize(self.type_, body)?,
-        ))
+        let packet = Packet::new(self.id, Content::deserialize(self.type_, body)?);
+
+        Ok(packet)
     }
 }

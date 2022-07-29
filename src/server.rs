@@ -24,9 +24,14 @@ use tokio::{
 use tracing::{debug, info};
 use uuid::Uuid;
 
+/// Broken:
+/// - Cap animation
+/// - Join
+
 pub struct Server {
-    peers: RwLock<HashMap<Uuid, Peer>>,
-    shine_bag: RwLock<HashSet<i32>>,
+    pub peers: RwLock<HashMap<Uuid, Peer>>,
+    // (id, is_grand)
+    shine_bag: RwLock<HashSet<(i32, bool)>>,
     players: Players,
     pub settings: Settings,
 }
@@ -77,400 +82,462 @@ impl Server {
     }
 
     pub async fn handle_connection(self: Arc<Self>, socket: TcpStream) -> Result<()> {
-        let ip = socket.peer_addr()?;
-        let (mut reader, writer) = split(socket);
+        let mut id = Uuid::nil();
 
-        let mut peer = Peer::new(ip, writer);
-        let id = peer.id.clone();
+        let run = || async {
+            let ip = socket.peer_addr()?;
+            debug!("New connection from: {}", ip);
 
-        peer.send(Packet::new(
-            peer.id,
-            Content::Init {
-                max_player: self.settings.server.max_players,
-            },
-        ))
-        .await;
+            let (mut reader, writer) = split(socket);
 
-        let packet = receive_packet(&mut reader).await?;
+            let mut peer = Peer::new(ip, writer);
 
-        if !packet.content.is_connect() {
-            debug!(
-                "Player {} didn't send connection packet on first connection",
-                packet.id
-            );
-            return Err(anyhow!("Didn't receive connection packet as first packet"));
-        }
-
-        let peers = self.peers.read().await;
-
-        let connected_peers = peers
-            .iter()
-            .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
-
-        if connected_peers == self.settings.server.max_players {
-            info!("Player {} couldn't join server is full", packet.id);
-            return Err(anyhow!("Server full"));
-        }
-
-        drop(peers);
-
-        let mut peers = self.peers.write().await;
-
-        // Remove stales clients and only keep the disconnected one
-        let _ = peers.remove(&packet.id);
-
-        match (packet.content, self.players.get(&packet.id).await) {
-            // Player already exist so reconnecting
-            (_, Some(_)) => {
-                debug!("Client {} attempting to reconnect", id);
-
-                peer.id = packet.id;
-                peers.insert(packet.id, peer);
-            }
-            // Player doesn't exist so we create it
-            (
-                Content::Connect {
-                    type_: _,
-                    max_player: _,
-                    client,
+            peer.send(Packet::new(
+                peer.id,
+                Content::Init {
+                    max_player: self.settings.server.max_players,
                 },
-                None,
-            ) => {
-                debug!("Client {} with id {} is joining", client, packet.id);
-                peer.id = packet.id;
+            ))
+            .await;
 
-                let player = Player::new(packet.id, client);
+            let connect_packet = receive_packet(&mut reader).await?;
 
-                let _ = self.players.add(player).await;
-
-                let peer = self.on_new_peer(peer).await?;
-
-                peers.insert(packet.id, peer);
-            }
-            _ => {
-                debug!("This case isn't supposed to be reach");
-                return Err(anyhow!("This case isn't supposed to be reach"));
-            }
-        }
-
-        let peers = self.peers.read().await;
-
-        let peer = peers
-            .get(&id)
-            .ok_or(anyhow!("Player is supposed to be in the HashMap"))?;
-
-        for (uuid, peer) in self.peers.read().await.iter() {
-            if *uuid == id {
-                continue;
+            if !connect_packet.content.is_connect() {
+                debug!(
+                    "Player {} didn't send connection packet on first connection",
+                    connect_packet.id
+                );
+                return Err(anyhow!("Didn't receive connection packet as first packet"));
             }
 
-            let player = self
-                .players
-                .get(uuid)
-                .await
-                .expect("Peers and Players are desynchronized");
+            let peers = self.peers.read().await;
 
-            let player = player.read().await;
+            let connected_peers = peers
+                .iter()
+                .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
 
-            let _ = peer
-                .send(Packet::new(
-                    player.id,
+            if connected_peers == self.settings.server.max_players {
+                info!("Player {} couldn't join server is full", connect_packet.id);
+                return Err(anyhow!("Server full"));
+            }
+
+            drop(peers);
+
+            let mut peers = self.peers.write().await;
+
+            // Remove stales clients and only keep the disconnected one
+            if let Some(peer) = peers.remove(&connect_packet.id) {
+                peer.disconnect().await;
+            }
+
+            let content = connect_packet.content.clone();
+            match (content, self.players.get(&connect_packet.id).await) {
+                // Player already exist so reconnecting
+                (_, Some(player)) => {
+                    let player = player.read().await;
+
+                    peer.id = connect_packet.id;
+                    id = connect_packet.id;
+                    peers.insert(connect_packet.id, peer);
+                    debug!("[{}] {} reconnected", player.name, id);
+                }
+                // Player doesn't exist so we create it
+                (
                     Content::Connect {
-                        type_: ConnectionType::First,
-                        max_player: self.settings.server.max_players as u16,
-                        client: player.name.clone(),
+                        type_: _,
+                        max_player: _,
+                        client,
                     },
-                ))
-                .await;
+                    None,
+                ) => {
+                    debug!("{} with id {} joined", client, connect_packet.id);
+                    peer.id = connect_packet.id;
+                    id = connect_packet.id;
 
-            if let Some(costume) = &player.costume {
+                    let player = Player::new(connect_packet.id, client);
+
+                    let _ = self.players.add(player).await;
+
+                    let peer = self.on_new_peer(peer).await?;
+
+                    peers.insert(connect_packet.id, peer);
+                }
+                _ => {
+                    debug!("This case isn't supposed to be reach");
+                    return Err(anyhow!("This case isn't supposed to be reach"));
+                }
+            }
+
+            tokio::spawn({
+                let server = self.clone();
+
+                async move {
+                    server.broadcast(connect_packet).await;
+                }
+            });
+
+            drop(peers);
+
+            let peers = self.peers.read().await;
+
+            let peer = peers
+                .get(&id)
+                .ok_or(anyhow!("Peer is supposed to be in the HashMap"))?;
+
+            for (uuid, other_peer) in self.peers.read().await.iter() {
+                if *uuid == id || !other_peer.connected {
+                    continue;
+                }
+
+                let player = self
+                    .players
+                    .get(uuid)
+                    .await
+                    .expect("Peers and Players are desynchronized");
+
+                let player = player.read().await;
+
                 let _ = peer
                     .send(Packet::new(
                         player.id,
-                        Content::Costume {
-                            body: costume.body.clone(),
-                            cap: costume.cap.clone(),
+                        Content::Connect {
+                            type_: ConnectionType::First,
+                            max_player: self.settings.server.max_players as u16,
+                            client: player.name.clone(),
                         },
                     ))
                     .await;
-            }
 
-            drop(player);
-        }
-
-        drop(peer);
-        drop(peers);
-
-        let player = self
-            .players
-            .get(&id)
-            .await
-            .expect("Player is supposed to be here");
-
-        loop {
-            let packet = receive_packet(&mut reader).await?;
-
-            if packet.id != id {
-                debug!("Id mismatch: received {} - expecting {}", packet.id, id);
-
-                return Err(anyhow!(
-                    "Id mismatch: received {} - expecting {}",
-                    packet.id,
-                    id
-                ));
-            }
-
-            let should_broadcast = match &packet.content {
-                Content::Costume { body, cap } => {
-                    let mut player = player.write().await;
-
-                    player.set_costume(body.clone(), cap.clone());
-                    player.loaded_save = true;
-
-                    tokio::spawn({
-                        let server = self.clone();
-                        let id = player.id.clone();
-
-                        async move {
-                            let _ = server.sync_player_shine_bag(id).await;
-                        }
-                    });
-
-                    true
+                if let Some(costume) = &player.costume {
+                    let _ = peer
+                        .send(Packet::new(
+                            player.id,
+                            Content::Costume {
+                                body: costume.body.clone(),
+                                cap: costume.cap.clone(),
+                            },
+                        ))
+                        .await;
                 }
-                Content::Game {
-                    is_2d,
-                    scenario,
-                    stage,
-                } => {
-                    let mut player = player.write().await;
 
-                    player.scenario = Some(*scenario);
-                    player.is_2d = *is_2d;
-                    player.last_game_packet = Some(packet.clone());
+                drop(player);
+            }
 
-                    if stage == "CapWorldHomeStage" && *scenario == 0 {
-                        player.is_speedrun = true;
-                        player.shine_sync.clear();
-                        let mut shine_bag = self.shine_bag.write().await;
+            drop(peer);
+            drop(peers);
 
-                        shine_bag.clear();
+            let player = self
+                .players
+                .get(&id)
+                .await
+                .expect("Player is supposed to be here");
 
-                        self.persist_shines().await;
+            loop {
+                let packet = receive_packet(&mut reader).await?;
 
-                        info!("Entered Cap on new save, preventing moon sync until Cascade");
-                    } else if stage == "WaterfallWorldHomeStage" {
-                        let was_speedrun = player.is_speedrun;
-                        player.is_speedrun = false;
+                if packet.content.is_disconnect() {
+                    break;
+                } else if packet.id != id {
+                    debug!("Id mismatch: received {} - expecting {}", packet.id, id);
 
-                        if was_speedrun {
+                    return Err(anyhow!(
+                        "Id mismatch: received {} - expecting {}",
+                        packet.id,
+                        id
+                    ));
+                }
+
+                let should_broadcast = match &packet.content {
+                    Content::Costume { body, cap } => {
+                        let mut player = player.write().await;
+
+                        player.set_costume(body.clone(), cap.clone());
+                        player.loaded_save = true;
+
+                        tokio::spawn({
+                            let server = self.clone();
                             let id = player.id.clone();
 
-                            tokio::spawn({
-                                let server = self.clone();
-                                async move {
-                                    info!(
-                                    "Entered Cascade with moon sync disabled, enabling moon sync"
-                                );
-                                    sleep(std::time::Duration::from_secs(15)).await;
-                                    let _ = server.sync_player_shine_bag(id).await;
-                                }
-                            });
-                        }
-                    }
-
-                    if self.settings.scenario.merge_enabled {
-                        self.broadcast_map(packet.clone(), |player, packet| async move {
-                            match packet.content {
-                                Content::Game {
-                                    is_2d,
-                                    scenario: _,
-                                    stage,
-                                } => {
-                                    let player = player.read().await;
-
-                                    let scenario = player.scenario.unwrap_or(200);
-                                    Packet::new(
-                                        packet.id,
-                                        Content::Game {
-                                            is_2d,
-                                            scenario,
-                                            stage,
-                                        },
-                                    )
-                                }
-                                _ => packet,
+                            async move {
+                                let _ = server.sync_player_shine_bag(id).await;
                             }
-                        })
-                        .await;
+                        });
 
-                        false
-                    } else {
                         true
                     }
-                }
-                Content::Tag {
-                    update_type: TagUpdate::State,
-                    is_it,
-                    seconds: _,
-                    minutes: _,
-                } => {
-                    let mut player = player.write().await;
+                    Content::Game {
+                        is_2d,
+                        scenario,
+                        stage,
+                    } => {
+                        let mut player = player.write().await;
+                        info!("{}: {}->{}", player.name, stage, scenario);
 
-                    player.is_seeking = *is_it;
+                        player.scenario = Some(*scenario);
+                        player.is_2d = *is_2d;
+                        player.last_game_packet = Some(packet.clone());
 
-                    true
-                }
-                Content::Tag {
-                    update_type: TagUpdate::Time,
-                    is_it: _,
-                    seconds,
-                    minutes,
-                } => {
-                    let mut player = player.write().await;
+                        if stage == "CapWorldHomeStage" && *scenario == 0 {
+                            player.is_speedrun = true;
+                            player.shine_sync.clear();
+                            let mut shine_bag = self.shine_bag.write().await;
 
-                    player.time =
-                        Duration::minutes(*minutes as i64) + Duration::seconds(*seconds as i64);
-
-                    true
-                }
-                Content::Shine { id } => {
-                    let mut player = player.write().await;
-
-                    if player.loaded_save {
-                        let mut shine_bag = self.shine_bag.write().await;
-
-                        shine_bag.insert(id.clone());
-                        if player.shine_sync.get(id).is_none() {
-                            info!("Got moon {}", id);
-                            player.shine_sync.insert(id.clone());
+                            shine_bag.clear();
 
                             tokio::spawn({
                                 let server = self.clone();
+
                                 async move {
-                                    server.sync_shine_bag().await;
+                                    server.persist_shines().await;
                                 }
                             });
+
+                            info!("Entered Cap on new save, preventing moon sync until Cascade");
+                        } else if stage == "WaterfallWorldHomeStage" {
+                            let was_speedrun = player.is_speedrun;
+                            player.is_speedrun = false;
+
+                            if was_speedrun {
+                                let id = player.id.clone();
+
+                                tokio::spawn({
+                                    let server = self.clone();
+                                    async move {
+                                        info!(
+                                    "Entered Cascade with moon sync disabled, enabling moon sync"
+                                );
+                                        sleep(std::time::Duration::from_secs(15)).await;
+                                        let _ = server.sync_player_shine_bag(id).await;
+                                    }
+                                });
+                            }
+                        }
+
+                        if self.settings.scenario.merge_enabled {
+                            tokio::spawn({
+                                let server = self.clone();
+                                let packet = packet.clone();
+
+                                async move {
+                                    server
+                                        .broadcast_map(packet, |player, packet| async move {
+                                            match packet.content {
+                                                Content::Game {
+                                                    is_2d,
+                                                    scenario: _,
+                                                    stage,
+                                                } => {
+                                                    let player = player.read().await;
+
+                                                    let scenario = player.scenario.unwrap_or(200);
+                                                    Packet::new(
+                                                        packet.id,
+                                                        Content::Game {
+                                                            is_2d,
+                                                            scenario,
+                                                            stage,
+                                                        },
+                                                    )
+                                                }
+                                                _ => packet,
+                                            }
+                                        })
+                                        .await;
+                                }
+                            });
+
+                            false
+                        } else {
+                            true
                         }
                     }
+                    Content::Tag {
+                        update_type: TagUpdate::State,
+                        is_it,
+                        seconds: _,
+                        minutes: _,
+                    } => {
+                        let mut player = player.write().await;
 
-                    true
-                }
-                Content::Player {
-                    position,
-                    quaternion,
-                    animation_blend_weights,
-                    act,
-                    subact,
-                } if self.settings.flip_in(&packet.id) => {
-                    let size = player.read().await.size();
+                        player.is_seeking = *is_it;
 
-                    tokio::spawn({
-                        let server = self.clone();
+                        true
+                    }
+                    Content::Tag {
+                        update_type: TagUpdate::Time,
+                        is_it: _,
+                        seconds,
+                        minutes,
+                    } => {
+                        let mut player = player.write().await;
 
-                        let id = packet.id.clone();
-                        let position = position.clone();
-                        let quaternion = quaternion.clone();
-                        let animation_blend_weights = animation_blend_weights.clone();
-                        let act = act.clone();
-                        let subact = subact.clone();
+                        player.time =
+                            Duration::minutes(*minutes as i64) + Duration::seconds(*seconds as i64);
 
-                        let position = position + Vec3::Y * size;
-                        let quaternion = quaternion
-                            * Quat::from_mat4(&Mat4::from_rotation_x(std::f32::consts::PI))
-                            * Quat::from_mat4(&Mat4::from_rotation_y(std::f32::consts::PI));
+                        true
+                    }
+                    Content::Shine { id, is_grand } => {
+                        let mut player = player.write().await;
 
-                        async move {
-                            server
-                                .broadcast(Packet::new(
-                                    id,
-                                    Content::Player {
-                                        position,
-                                        quaternion,
-                                        animation_blend_weights,
-                                        act,
-                                        subact,
-                                    },
-                                ))
-                                .await;
+                        if player.loaded_save {
+                            let mut shine_bag = self.shine_bag.write().await;
+
+                            let shine = (id.clone(), is_grand.clone());
+
+                            shine_bag.insert(shine.clone());
+
+                            if player.shine_sync.get(&shine).is_none() {
+                                info!("Got moon {}", id);
+                                player.shine_sync.insert(shine.clone());
+
+                                tokio::spawn({
+                                    let server = self.clone();
+                                    async move {
+                                        server.sync_shine_bag().await;
+                                    }
+                                });
+                            }
                         }
-                    });
 
-                    false
-                }
-                Content::Player {
-                    position: _,
-                    quaternion: _,
-                    animation_blend_weights: _,
-                    act: _,
-                    subact: _,
-                } if self.settings.flip_not_in(&packet.id) => {
-                    tokio::spawn({
-                        let server = self.clone();
+                        true
+                    }
+                    Content::Player {
+                        position,
+                        quaternion,
+                        animation_blend_weights,
+                        act,
+                        subact,
+                    } if self.settings.flip_in(&packet.id) => {
+                        let size = player.read().await.size();
 
-                        let packet = packet.clone();
+                        tokio::spawn({
+                            let server = self.clone();
 
-                        async move {
-                            server
-                                .broadcast_map(packet, |player, packet| async move {
-                                    match packet.content {
+                            let id = packet.id.clone();
+                            let position = position.clone();
+                            let quaternion = quaternion.clone();
+                            let animation_blend_weights = animation_blend_weights.clone();
+                            let act = act.clone();
+                            let subact = subact.clone();
+
+                            let position = position + Vec3::Y * size;
+                            let quaternion = quaternion
+                                * Quat::from_mat4(&Mat4::from_rotation_x(std::f32::consts::PI))
+                                * Quat::from_mat4(&Mat4::from_rotation_y(std::f32::consts::PI));
+
+                            async move {
+                                server
+                                    .broadcast(Packet::new(
+                                        id,
                                         Content::Player {
                                             position,
                                             quaternion,
                                             animation_blend_weights,
                                             act,
                                             subact,
-                                        } => {
-                                            let player = player.read().await;
-                                            let size = player.size();
-                                            drop(player);
+                                        },
+                                    ))
+                                    .await;
+                            }
+                        });
 
-                                            let position = position + Vec3::Y * size;
-                                            let quaternion = quaternion
-                                                * Quat::from_mat4(&Mat4::from_rotation_x(
-                                                    std::f32::consts::PI,
-                                                ))
-                                                * Quat::from_mat4(&Mat4::from_rotation_y(
-                                                    std::f32::consts::PI,
-                                                ));
+                        false
+                    }
+                    Content::Player {
+                        position: _,
+                        quaternion: _,
+                        animation_blend_weights: _,
+                        act: _,
+                        subact: _,
+                    } if self.settings.flip_not_in(&packet.id) => {
+                        tokio::spawn({
+                            let server = self.clone();
 
-                                            Packet::new(
-                                                id,
-                                                Content::Player {
-                                                    position,
-                                                    quaternion,
-                                                    animation_blend_weights,
-                                                    act,
-                                                    subact,
-                                                },
-                                            )
+                            let packet = packet.clone();
+
+                            async move {
+                                server
+                                    .broadcast_map(packet, |player, packet| async move {
+                                        match packet.content {
+                                            Content::Player {
+                                                position,
+                                                quaternion,
+                                                animation_blend_weights,
+                                                act,
+                                                subact,
+                                            } => {
+                                                let player = player.read().await;
+                                                let size = player.size();
+                                                drop(player);
+
+                                                let position = position + Vec3::Y * size;
+                                                let quaternion = quaternion
+                                                    * Quat::from_mat4(&Mat4::from_rotation_x(
+                                                        std::f32::consts::PI,
+                                                    ))
+                                                    * Quat::from_mat4(&Mat4::from_rotation_y(
+                                                        std::f32::consts::PI,
+                                                    ));
+
+                                                Packet::new(
+                                                    id,
+                                                    Content::Player {
+                                                        position,
+                                                        quaternion,
+                                                        animation_blend_weights,
+                                                        act,
+                                                        subact,
+                                                    },
+                                                )
+                                            }
+                                            _ => packet,
                                         }
-                                        _ => packet,
-                                    }
-                                })
-                                .await
-                        }
-                    });
+                                    })
+                                    .await
+                            }
+                        });
 
-                    false
+                        false
+                    }
+                    _ => true,
+                };
+
+                if should_broadcast {
+                    self.broadcast(packet).await;
                 }
-                Content::Disconnect => break,
-                _ => true,
-            };
+            }
 
-            if should_broadcast {
-                self.broadcast(packet).await;
+            // TODO: Find out when peers & players are cleaned
+            self.disconnect(id).await;
+
+            Ok(())
+        };
+
+        match run().await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                self.disconnect(id).await;
+                Err(e)
             }
         }
+    }
 
-        // TODO: Find out when peers & players are cleaned
+    async fn disconnect(&self, id: Uuid) {
         let mut peers = self.peers.write().await;
         let mut peer = peers.get_mut(&id).expect("Peer is supposed to be here");
+        let player = self
+            .players
+            .get(&id)
+            .await
+            .expect("Player is supposed to be here");
 
+        let player = player.read().await;
         peer.connected = false;
         peer.disconnect().await;
+        drop(peers);
+        self.broadcast(Packet::new(id, Content::Disconnect)).await;
 
-        Ok(())
+        info!("{} just disconnected", player.name);
     }
 
     async fn on_new_peer(&self, peer: Peer) -> Result<Peer> {
@@ -529,11 +596,17 @@ impl Server {
         let peers = self.peers.read().await;
         let peer = peers.get(&id).ok_or(anyhow!("Couldn't find peer"))?;
 
-        for shine in bag.difference(&player.shine_sync.clone()) {
-            player.shine_sync.insert(shine.clone());
+        for (shine_id, is_grand) in bag.difference(&player.shine_sync.clone()) {
+            player
+                .shine_sync
+                .insert((shine_id.clone(), is_grand.clone()));
+
             peer.send(Packet::new(
                 id.clone(),
-                Content::Shine { id: shine.clone() },
+                Content::Shine {
+                    id: shine_id.clone(),
+                    is_grand: is_grand.clone(),
+                },
             ))
             .await
         }
@@ -551,18 +624,16 @@ impl Server {
         let shines = shines.clone();
         let file_name = self.settings.persist_shines.file_name.clone();
 
-        tokio::spawn(async move {
-            let serialized = serde_json::to_string(&shines).unwrap();
+        let serialized = serde_json::to_string(&shines).unwrap();
 
-            let mut file = File::open(file_name)
-                .await
-                .expect("Shine file can't be opened");
+        let mut file = File::open(file_name)
+            .await
+            .expect("Shine file can't be opened");
 
-            let _ = file.write_all(serialized.as_bytes()).await;
-        });
+        let _ = file.write_all(serialized.as_bytes()).await;
     }
 
-    async fn sync_shine_bag(&self) {
+    pub async fn sync_shine_bag(&self) {
         self.persist_shines().await;
         join_all(
             self.players
@@ -576,7 +647,7 @@ impl Server {
 
     pub async fn load_shines(&self) -> Result<()> {
         if !self.settings.persist_shines.enabled {
-            info!("Moons sync is disabled");
+            info!("Moon sync is disabled");
             return Ok(());
         }
 
@@ -586,7 +657,7 @@ impl Server {
             .create(true)
             .open(&self.settings.persist_shines.file_name)
             .await
-            .expect("Settings couldn't be loaded or created");
+            .expect("Moons couldn't be loaded or created");
 
         let mut content = String::from("");
         file.read_to_string(&mut content).await?;
@@ -612,8 +683,8 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
         Ok(n) if n == 0 => return Ok(Packet::new(Uuid::nil(), Content::Disconnect)),
         Ok(_) => (),
         Err(e) => {
-            debug!("Error reading header {}", e);
-            return Err(anyhow!(e));
+            debug!("Connection closed: {}", e);
+            return Ok(Packet::new(Uuid::nil(), Content::Disconnect));
         }
     };
 

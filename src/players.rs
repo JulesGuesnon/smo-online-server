@@ -26,7 +26,8 @@ pub struct Player {
     pub is_speedrun: bool,
     pub is_seeking: bool,
     pub last_game_packet: Option<Packet>,
-    pub shine_sync: HashSet<i32>,
+    // id, is_grand
+    pub shine_sync: HashSet<(i32, bool)>,
     pub loaded_save: bool,
     pub time: Duration,
 }
@@ -87,11 +88,12 @@ impl Players {
         players.keys().map(|k| k.clone()).collect()
     }
 
-    pub async fn remove(&self, id: &Uuid) -> Option<SharedPlayer> {
-        let mut players = self.players.write().await;
+    // No idea when to remove a player for now
+    // pub async fn remove(&self, id: &Uuid) -> Option<SharedPlayer> {
+    //     let mut players = self.players.write().await;
 
-        players.remove(id)
-    }
+    //     players.remove(id)
+    // }
 
     pub async fn get_last_game_packets(&self) -> Vec<Packet> {
         let players = self.players.read().await;
