@@ -79,6 +79,15 @@ impl Server {
         .await;
     }
 
+    pub async fn connected_peers(&self) -> Vec<Uuid> {
+        let peers = self.peers.read().await;
+
+        peers
+            .iter()
+            .filter_map(|(id, p)| if p.connected { Some(id.clone()) } else { None })
+            .collect()
+    }
+
     pub async fn handle_connection(self: Arc<Self>, socket: TcpStream) -> Result<()> {
         let mut id = Uuid::nil();
 

@@ -1,8 +1,10 @@
 use crate::{
     packet::{Content, Packet},
     server::Server,
+    settings::Settings,
 };
 use colored::Colorize;
+use futures::future::join_all;
 use std::{sync::Arc, vec};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{error, info};
@@ -182,9 +184,21 @@ pub enum Command {
     SendAll {
         stage: Stage,
     },
+    Scenario {
+        subcmd: String,
+        value: String,
+    },
+    MaxPlayers {
+        count: u16,
+    },
+    List,
+    LoadSettings,
     Unknown {
         cmd: String,
     },
+    //shine
+    //flip
+    //tag
 }
 
 impl Command {
@@ -207,7 +221,7 @@ impl Command {
 
         let cmd = splitted.remove(0);
 
-        if splitted.len() == 0 {
+        if splitted.len() == 0 && cmd != "list" {
             let cmd = Self::default_from_str(cmd);
             return match &cmd {
                 Self::Unknown { cmd: _ } => Ok(cmd),
@@ -240,6 +254,23 @@ impl Command {
                     .map_err(|_| "Scenario should be a number between -1 and 127".to_string())?,
                 players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
             },
+            "scenario" if splitted.len() < 2 => {
+                return Err(Self::default_from_str("scenario").help().to_string());
+            }
+            "scenario" => Self::Scenario {
+                subcmd: splitted.remove(0).to_string(),
+                value: splitted.remove(0).to_string(),
+            },
+            "maxplayers" if splitted.len() < 1 => {
+                return Err(Self::default_from_str("maxplayers").help().to_string());
+            }
+            "maxplayers" => Self::MaxPlayers {
+                count: splitted
+                    .remove(0)
+                    .parse::<u16>()
+                    .map_err(|_| "Count should be a positive integer")?,
+            },
+            "list" => Self::List,
             v => Self::Unknown { cmd: v.to_string() },
         };
 
@@ -258,6 +289,13 @@ impl Command {
                 players: vec![],
             },
             "sendall" => Self::SendAll { stage: Stage::Cap },
+            "scenario" => Self::Scenario {
+                subcmd: "".to_string(),
+                value: "".to_string(),
+            },
+            "maxplayers" => Self::MaxPlayers { count: 0 },
+            "list" => Self::List,
+            "loadsettings" => Self::LoadSettings,
             v => Self::Unknown { cmd: v.to_string() },
         }
     }
@@ -287,6 +325,16 @@ impl Command {
                 "sendall <stage> ",
                 "Will teleport players to the wanted stage",
             ),
+            Self::Scenario {
+                subcmd: _,
+                value: _,
+            } => Help::new("scenario merge <true|false>", "Will merge scenarios"),
+            Self::MaxPlayers { count: _ } => Help::new(
+                "maxplayers <count>",
+                "Will update the max player that can connect to the server",
+            ),
+            Self::List => Help::new("list", "List all the connected players"),
+            Self::LoadSettings => Help::new("loadsettings", "Load the settings into the server. Do ift after changing the settings while the server is running"),
             Self::Unknown { cmd: _ } => Help::merge(vec![
                 Self::default_from_str("rejoin").help(),
                 Self::default_from_str("crash").help(),
@@ -491,6 +539,59 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
             }
 
             info!("Banned {}", players.join(", "));
+        }
+        Command::Scenario { subcmd, value } => match subcmd.as_str() {
+            "merge" => {
+                let mut settings = server.settings.write().await;
+                if value.as_str() == "true" {
+                    settings.scenario.merge_enabled = true;
+                    settings.save().await;
+                } else if value.as_str() == "false" {
+                    settings.scenario.merge_enabled = true;
+                    settings.save().await;
+                } else {
+                    println!(
+                        "{}",
+                        Command::default_from_str("scenario").help().to_string()
+                    )
+                }
+            }
+            _ => println!(
+                "{}",
+                Command::default_from_str("scenario").help().to_string()
+            ),
+        },
+        Command::MaxPlayers { count } => {
+            let mut settings = server.settings.write().await;
+
+            settings.server.max_players = count as i16;
+            settings.save().await;
+        }
+        Command::List => {
+            let connected = server.connected_peers().await;
+
+            let players = server.players.all_from_ids(connected).await;
+
+            let players = join_all(players.iter().map(|p| p.read())).await;
+
+            let list = players.iter().fold(String::from(""), |acc, player| {
+                format!(
+                    "{}{}- [{}] -> {}",
+                    acc,
+                    if acc == "" { "" } else { "\n" },
+                    player.name,
+                    player.id
+                )
+            });
+
+            println!("{}", list);
+        }
+        Command::LoadSettings => {
+            let updated = Settings::load().await;
+
+            let mut settings = server.settings.write().await;
+
+            *settings = updated;
         }
         Command::Unknown { cmd } => {
             println!(

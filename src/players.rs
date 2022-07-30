@@ -84,6 +84,20 @@ impl Players {
         players.get(id).map(|p| p.clone())
     }
 
+    // pub async fn all(&self) -> Vec<SharedPlayer> {
+    //     let players = self.players.read().await;
+
+    //     players.values().map(|p| p.clone()).collect()
+    // }
+
+    pub async fn all_from_ids(&self, ids: Vec<Uuid>) -> Vec<SharedPlayer> {
+        let players = self.players.read().await;
+
+        ids.iter()
+            .filter_map(|id| players.get(id).map(|p| p.clone()))
+            .collect()
+    }
+
     pub async fn all_ids(&self) -> Vec<Uuid> {
         let players = self.players.read().await;
 
