@@ -3,6 +3,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use glam::{Quat, Vec3};
 use std::ops::Range;
 use std::str::from_utf8;
+use tracing::debug;
 use uuid::Uuid;
 
 const ID_RANGE: Range<usize> = 0..16;
@@ -345,12 +346,23 @@ impl Content {
                 scenario: body.slice(1..2).get_u8(),
                 stage: Self::deserialize_string(body.slice(2..0x42))?,
             },
-            5 => Self::Tag {
-                update_type: body.slice(0..1).get_u8(),
-                is_it: body.slice(1..2).get_u8().as_bool(),
-                seconds: body.slice(2..4).get_u16_le(),
-                minutes: body.slice(4..6).get_u16_le(),
-            },
+            5 => {
+                if body.len() == 5 {
+                    Self::Tag {
+                        update_type: body.slice(0..1).get_u8(),
+                        is_it: body.slice(1..2).get_u8().as_bool(),
+                        seconds: body.slice(2..3).get_u8() as u16,
+                        minutes: body.slice(3..5).get_u16_le(),
+                    }
+                } else {
+                    Self::Tag {
+                        update_type: body.slice(0..1).get_u8(),
+                        is_it: body.slice(1..2).get_u8().as_bool(),
+                        seconds: body.slice(2..4).get_u16_le(),
+                        minutes: body.slice(4..6).get_u16_le(),
+                    }
+                }
+            }
             6 => Self::Connect {
                 type_: ConnectionType::from_u32(body.slice(0..4).get_u32_le())?,
                 max_player: body.slice(4..6).get_u16_le(),

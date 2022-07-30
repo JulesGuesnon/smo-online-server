@@ -499,6 +499,7 @@ impl Server {
 
                         false
                     }
+                    Content::Unknown => false,
                     _ => true,
                 };
 
