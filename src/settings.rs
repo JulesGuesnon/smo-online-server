@@ -34,6 +34,20 @@ pub struct BanList {
     pub ips: Vec<IpAddr>,
 }
 
+impl BanList {
+    pub fn ban(&mut self, id: Uuid, ip: Option<IpAddr>) {
+        self.ids.push(id);
+
+        if let Some(ip) = ip {
+            self.ips.push(ip);
+        }
+    }
+
+    pub fn is_ip_ban(&self, ip: &IpAddr) -> bool {
+        self.ips.contains(ip)
+    }
+}
+
 impl Default for BanList {
     fn default() -> Self {
         Self {
@@ -128,6 +142,19 @@ impl Settings {
                 settings
             }
         }
+    }
+
+    pub async fn save(&self) {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open("settings.json")
+            .await
+            .expect("Settings couldn't be loaded or created");
+
+        let serialized = serde_json::to_string_pretty(self).unwrap();
+
+        file.write_all(serialized.as_bytes()).await.unwrap();
     }
 
     pub fn flip_in(&self, id: &Uuid) -> bool {

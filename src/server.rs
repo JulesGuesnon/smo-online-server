@@ -24,16 +24,12 @@ use tokio::{
 use tracing::{debug, info};
 use uuid::Uuid;
 
-/// Broken:
-/// - Cap animation
-/// - Join
-
 pub struct Server {
     pub peers: RwLock<HashMap<Uuid, Peer>>,
     // (id, is_grand)
     shine_bag: RwLock<HashSet<(i32, bool)>>,
-    players: Players,
-    pub settings: Settings,
+    pub players: Players,
+    pub settings: RwLock<Settings>,
 }
 
 impl Server {
@@ -42,7 +38,7 @@ impl Server {
             peers: RwLock::default(),
             shine_bag: RwLock::default(),
             players: Players::new(),
-            settings,
+            settings: RwLock::new(settings),
         }
     }
 
@@ -61,7 +57,7 @@ impl Server {
     pub async fn broadcast_map<F, Fut>(&self, packet: Packet, map: F)
     where
         F: Fn(SharedPlayer, Packet) -> Fut,
-        Fut: Future<Output = Packet>,
+        Fut: Future<Output = Option<Packet>>,
     {
         let peers = self.peers.read().await;
 
@@ -72,10 +68,12 @@ impl Server {
                 .map(|(_, peer)| async {
                     let packet = match self.players.get(&packet.id).await {
                         Some(p) => (map)(p, packet.clone()).await,
-                        None => packet.clone(),
+                        None => Some(packet.clone()),
                     };
 
-                    peer.send(packet).await;
+                    if let Some(packet) = packet {
+                        peer.send(packet).await;
+                    }
                 }),
         )
         .await;
@@ -85,7 +83,7 @@ impl Server {
         let mut id = Uuid::nil();
 
         let run = || async {
-            let ip = socket.peer_addr()?;
+            let ip = socket.peer_addr()?.ip();
             debug!("New connection from: {}", ip);
 
             let (mut reader, writer) = split(socket);
@@ -95,7 +93,7 @@ impl Server {
             peer.send(Packet::new(
                 peer.id,
                 Content::Init {
-                    max_player: self.settings.server.max_players,
+                    max_player: self.settings.read().await.server.max_players,
                 },
             ))
             .await;
@@ -116,7 +114,7 @@ impl Server {
                 .iter()
                 .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
 
-            if connected_peers == self.settings.server.max_players {
+            if connected_peers == self.settings.read().await.server.max_players {
                 info!("Player {} couldn't join server is full", connect_packet.id);
                 return Err(anyhow!("Server full"));
             }
@@ -137,6 +135,9 @@ impl Server {
                     let player = player.read().await;
 
                     peer.id = connect_packet.id;
+
+                    let peer = self.on_new_peer(peer).await?;
+
                     id = connect_packet.id;
                     peers.insert(connect_packet.id, peer);
                     debug!("[{}] {} reconnected", player.name, id);
@@ -150,7 +151,7 @@ impl Server {
                     },
                     None,
                 ) => {
-                    debug!("{} with id {} joined", client, connect_packet.id);
+                    debug!("{} with id {} joining", client, connect_packet.id);
                     peer.id = connect_packet.id;
                     id = connect_packet.id;
 
@@ -202,7 +203,7 @@ impl Server {
                         player.id,
                         Content::Connect {
                             type_: ConnectionType::First,
-                            max_player: self.settings.server.max_players as u16,
+                            max_player: self.settings.read().await.server.max_players as u16,
                             client: player.name.clone(),
                         },
                     ))
@@ -313,7 +314,7 @@ impl Server {
                             }
                         }
 
-                        if self.settings.scenario.merge_enabled {
+                        if self.settings.read().await.scenario.merge_enabled {
                             tokio::spawn({
                                 let server = self.clone();
                                 let packet = packet.clone();
@@ -321,7 +322,7 @@ impl Server {
                                 async move {
                                     server
                                         .broadcast_map(packet, |player, packet| async move {
-                                            match packet.content {
+                                            let packet = match packet.content {
                                                 Content::Game {
                                                     is_2d,
                                                     scenario: _,
@@ -340,7 +341,9 @@ impl Server {
                                                     )
                                                 }
                                                 _ => packet,
-                                            }
+                                            };
+
+                                            Some(packet)
                                         })
                                         .await;
                                 }
@@ -407,7 +410,7 @@ impl Server {
                         animation_blend_weights,
                         act,
                         subact,
-                    } if self.settings.flip_in(&packet.id) => {
+                    } if self.settings.read().await.flip_in(&packet.id) => {
                         let size = player.read().await.size();
 
                         tokio::spawn({
@@ -449,7 +452,7 @@ impl Server {
                         animation_blend_weights: _,
                         act: _,
                         subact: _,
-                    } if self.settings.flip_not_in(&packet.id) => {
+                    } if self.settings.read().await.flip_not_in(&packet.id) => {
                         tokio::spawn({
                             let server = self.clone();
 
@@ -458,7 +461,7 @@ impl Server {
                             async move {
                                 server
                                     .broadcast_map(packet, |player, packet| async move {
-                                        match packet.content {
+                                        let packet = match packet.content {
                                             Content::Player {
                                                 position,
                                                 quaternion,
@@ -491,7 +494,9 @@ impl Server {
                                                 )
                                             }
                                             _ => packet,
-                                        }
+                                        };
+
+                                        Some(packet)
                                     })
                                     .await
                             }
@@ -525,7 +530,14 @@ impl Server {
 
     async fn disconnect(&self, id: Uuid) {
         let mut peers = self.peers.write().await;
-        let mut peer = peers.get_mut(&id).expect("Peer is supposed to be here");
+        let peer = peers.get_mut(&id);
+
+        if peer.is_none() {
+            return;
+        }
+
+        let mut peer = peer.unwrap();
+
         let player = self
             .players
             .get(&id)
@@ -542,21 +554,23 @@ impl Server {
     }
 
     async fn on_new_peer(&self, peer: Peer) -> Result<Peer> {
-        let is_ip_banned = self
-            .settings
+        let settings = self.settings.read().await;
+
+        let is_ip_banned = settings
             .ban_list
             .ips
             .iter()
-            .find(|addr| **addr == peer.ip.ip())
+            .find(|addr| **addr == peer.ip)
             .is_some();
 
-        let is_id_banned = self
-            .settings
+        let is_id_banned = settings
             .ban_list
             .ids
             .iter()
             .find(|addr| **addr == peer.id)
             .is_some();
+
+        drop(settings);
 
         if is_id_banned || is_ip_banned {
             info!(
@@ -616,14 +630,17 @@ impl Server {
     }
 
     async fn persist_shines(&self) {
-        if !self.settings.persist_shines.enabled {
+        let settings = self.settings.read().await;
+        if !settings.persist_shines.enabled {
             return;
         }
 
         let shines = self.shine_bag.read().await;
 
         let shines = shines.clone();
-        let file_name = self.settings.persist_shines.file_name.clone();
+        let file_name = settings.persist_shines.file_name.clone();
+
+        drop(settings);
 
         let serialized = serde_json::to_string(&shines).unwrap();
 
@@ -647,7 +664,9 @@ impl Server {
     }
 
     pub async fn load_shines(&self) -> Result<()> {
-        if !self.settings.persist_shines.enabled {
+        let settings = self.settings.read().await;
+
+        if !settings.persist_shines.enabled {
             info!("Moon sync is disabled");
             return Ok(());
         }
@@ -656,7 +675,7 @@ impl Server {
             .read(true)
             .write(true)
             .create(true)
-            .open(&self.settings.persist_shines.file_name)
+            .open(&settings.persist_shines.file_name)
             .await
             .expect("Moons couldn't be loaded or created");
 
@@ -667,10 +686,10 @@ impl Server {
 
         let mut shines = self.shine_bag.write().await;
 
-        info!(
-            "Moons loaded from {}",
-            self.settings.persist_shines.file_name
-        );
+        info!("Moons loaded from {}", settings.persist_shines.file_name);
+
+        drop(settings);
+
         *shines = deserialized;
 
         Ok(())

@@ -95,7 +95,7 @@ impl Players {
 
         names
             .iter()
-            .find(|(id, name)| name.to_lowercase() == username)
+            .find(|(_, name)| name.to_lowercase() == username.to_lowercase())
             .map(|(id, _)| id.clone())
     }
 

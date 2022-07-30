@@ -1,8 +1,12 @@
+use crate::{
+    packet::{Content, Packet},
+    server::Server,
+};
 use colored::Colorize;
 use std::{sync::Arc, vec};
-use tracing::info;
-
-use crate::{packet::Packet, server::Server};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tracing::{error, info};
+use uuid::Uuid;
 
 trait IsWildcard {
     fn is_wildcard(&self) -> bool;
@@ -13,6 +17,8 @@ impl IsWildcard for Vec<String> {
         self.contains(&String::from("*"))
     }
 }
+
+#[derive(Debug)]
 pub enum Stage {
     Cap,
     Cascade,
@@ -37,24 +43,26 @@ impl Stage {
     pub fn help() -> String {
         format!(
             "
-    {}
-    - Cap
-    - Cascade
-    - Sand
-    - Lake
-    - Wooded
-    - Cloud
-    - Lost
-    - Metro
-    - Sea
-    - Snow
-    - Lunch
-    - Ruined
-    - Bowser
-    - Moon
-    - Mush
-    - Dark
-    - Darker
+Here is the list of the valid stages
+
+{}
+- Cap
+- Cascade
+- Sand
+- Lake
+- Wooded
+- Cloud
+- Lost
+- Metro
+- Sea
+- Snow
+- Lunch
+- Ruined
+- Bowser
+- Moon
+- Mush
+- Dark
+- Darker
         ",
             "[Stages]".cyan()
         )
@@ -79,7 +87,7 @@ impl Stage {
             "mush" => Self::Mush,
             "dark" => Self::Dark,
             "darker" => Self::Darker,
-            _ => return Err(String::from("")),
+            _ => return Err(Self::help()),
         };
 
         Ok(stage)
@@ -121,21 +129,40 @@ impl Help {
     }
 
     pub fn to_string(&self) -> String {
-        format!(
-            "
-    {}
-    {}
-    {}
-    {}
-        ",
-            "[Usage]".cyan(),
-            self.usage,
-            "[Description]".cyan(),
-            self.description
+        if self.description == "" {
+            format!("{}\n{}\n", "[Usage]".cyan(), self.usage,)
+        } else {
+            format!(
+                "{}\n{}\n\n{}\n{}\n",
+                "[Usage]".cyan(),
+                self.usage,
+                "[Description]".cyan(),
+                self.description
+            )
+        }
+    }
+
+    pub fn merge(helps: Vec<Help>) -> Self {
+        helps.into_iter().fold(
+            Self {
+                usage: "".to_string(),
+                description: "Enter one of the command above to get informations about it"
+                    .to_string(),
+            },
+            |mut acc, help| {
+                acc.usage = format!(
+                    "{}{}{}",
+                    acc.usage,
+                    if acc.usage == "" { "" } else { "\n" },
+                    help.usage
+                );
+                acc
+            },
         )
     }
 }
 
+#[derive(Debug)]
 pub enum Command {
     Rejoin {
         players: Vec<String>,
@@ -155,7 +182,9 @@ pub enum Command {
     SendAll {
         stage: Stage,
     },
-    Unknown,
+    Unknown {
+        cmd: String,
+    },
 }
 
 impl Command {
@@ -168,24 +197,33 @@ impl Command {
     }
 
     pub fn parse(stdin: String) -> Result<Self, String> {
-        let mut splitted: Vec<&str> = stdin.split(' ').collect();
+        let mut splitted: Vec<&str> = stdin.split(' ').filter(|v| *v != "").collect();
 
         if splitted.len() == 0 {
-            return Ok(Self::Unknown);
+            return Ok(Self::Unknown {
+                cmd: "".to_string(),
+            });
         }
 
         let cmd = splitted.remove(0);
 
         if splitted.len() == 0 {
-            return Err(Self::default_from_str(cmd).help().to_string());
+            let cmd = Self::default_from_str(cmd);
+            return match &cmd {
+                Self::Unknown { cmd: _ } => Ok(cmd),
+                _ => Err(cmd.help().to_string()),
+            };
         }
 
         let parsed = match cmd {
             "rejoin" => Self::Rejoin {
-                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
+                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_lowercase()).collect()),
             },
             "crash" => Self::Crash {
-                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
+                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_lowercase()).collect()),
+            },
+            "ban" => Self::Ban {
+                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_lowercase()).collect()),
             },
             "sendall" => Self::SendAll {
                 stage: Stage::from_str(splitted.remove(0))?,
@@ -202,7 +240,7 @@ impl Command {
                     .map_err(|_| "Scenario should be a number between -1 and 127".to_string())?,
                 players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
             },
-            _ => Self::Unknown,
+            v => Self::Unknown { cmd: v.to_string() },
         };
 
         Ok(parsed)
@@ -219,8 +257,8 @@ impl Command {
                 scenario: 0,
                 players: vec![],
             },
-            "sendAll" => Self::SendAll { stage: Stage::Cap },
-            _ => Self::Unknown,
+            "sendall" => Self::SendAll { stage: Stage::Cap },
+            v => Self::Unknown { cmd: v.to_string() },
         }
     }
 
@@ -249,23 +287,34 @@ impl Command {
                 "sendall <stage> ",
                 "Will teleport players to the wanted stage",
             ),
-            Self::Unknown => Help::new("", ""),
+            Self::Unknown { cmd: _ } => Help::merge(vec![
+                Self::default_from_str("rejoin").help(),
+                Self::default_from_str("crash").help(),
+                Self::default_from_str("ban").help(),
+                Self::default_from_str("send").help(),
+                Self::default_from_str("sendall").help(),
+            ]),
         }
     }
 }
 
-pub async fn listen() {
-    loop {
-        for line in std::io::stdin().lines() {
-            if line.is_err() {
-                continue;
-            }
+pub async fn listen(server: Arc<Server>) {
+    let mut stdin = BufReader::new(tokio::io::stdin()).lines();
 
-            match Command::parse(line.unwrap()) {
-                Ok(_) => {
-                    println!("TODO: ");
-                }
-                Err(message) => println!("{}", message),
+    loop {
+        let line = stdin.next_line().await;
+
+        if line.is_err() {
+            error!("Failed to read stdin {}", line.unwrap_err());
+            continue;
+        }
+
+        let line = line.unwrap();
+
+        if let Some(line) = line {
+            match Command::parse(line) {
+                Ok(cmd) => exec_cmd(server.clone(), cmd).await,
+                Err(message) => println!("{}\n{}", "[Error]".red(), message),
             };
         }
     }
@@ -280,6 +329,180 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
         Command::Rejoin { players } => {
             server.disconnect_by_name(players.clone()).await;
             info!("Disconnected {}", players.join(", "));
+        }
+        Command::Crash { players } if players.is_wildcard() => {
+            server
+                .broadcast(Packet::new(
+                    Uuid::nil(),
+                    Content::ChangeStage {
+                        stage: "baguette".to_string(),
+                        id: "dufromage".to_string(),
+                        scenario: 21,
+                        sub_scenario: 42,
+                    },
+                ))
+                .await;
+
+            info!("Crashed everyone");
+        }
+        Command::Crash { players } => {
+            server
+                .broadcast_map(
+                    Packet::new(
+                        Uuid::nil(),
+                        Content::ChangeStage {
+                            stage: "baguette".to_string(),
+                            id: "dufromage".to_string(),
+                            scenario: 21,
+                            sub_scenario: 42,
+                        },
+                    ),
+                    |player, packet| {
+                        let players = players.clone();
+                        async move {
+                            let player = player.read().await;
+
+                            if players.contains(&player.name) {
+                                Some(packet)
+                            } else {
+                                None
+                            }
+                        }
+                    },
+                )
+                .await;
+
+            info!("Crashed {}", players.join(", "));
+        }
+        Command::Send {
+            stage,
+            id,
+            scenario,
+            players,
+        } if players.is_wildcard() => {
+            server
+                .broadcast(Packet::new(
+                    Uuid::nil(),
+                    Content::ChangeStage {
+                        id: id.clone(),
+                        stage: stage.to_str().to_string(),
+                        scenario,
+                        sub_scenario: 0,
+                    },
+                ))
+                .await;
+
+            info!(
+                "Sent everyone to stage: {}, id: {}, scenario: {}",
+                stage.to_str(),
+                id,
+                scenario
+            );
+        }
+        Command::Send {
+            stage,
+            id,
+            scenario,
+            players,
+        } => {
+            server
+                .broadcast_map(
+                    Packet::new(
+                        Uuid::nil(),
+                        Content::ChangeStage {
+                            id: id.clone(),
+                            stage: stage.to_str().to_string(),
+                            scenario,
+                            sub_scenario: 0,
+                        },
+                    ),
+                    |player, packet| {
+                        let players = players.clone();
+                        async move {
+                            let player = player.read().await;
+
+                            if players.contains(&player.name) {
+                                Some(packet)
+                            } else {
+                                None
+                            }
+                        }
+                    },
+                )
+                .await;
+
+            info!(
+                "Sent everyone to stage: {}, id: {}, scenario: {}",
+                stage.to_str(),
+                id,
+                scenario
+            );
+        }
+        Command::SendAll { stage } => {
+            server
+                .broadcast(Packet::new(
+                    Uuid::nil(),
+                    Content::ChangeStage {
+                        id: "".to_string(),
+                        stage: stage.to_str().to_string(),
+                        scenario: -1,
+                        sub_scenario: 0,
+                    },
+                ))
+                .await;
+
+            info!("Sent everyone to {}", stage.to_str());
+        }
+        Command::Ban { players } => {
+            let mut settings = server.settings.write().await;
+            let peers = server.peers.read().await;
+
+            for name in players.clone() {
+                let id = server.players.get_id_by_name(name).await;
+
+                if id.is_none() {
+                    continue;
+                }
+
+                let id = id.unwrap();
+
+                let peer = peers.get(&id);
+
+                if peer.is_none() {
+                    settings.ban_list.ban(id, None);
+                    settings.save().await;
+                    break;
+                }
+
+                let peer = peer.unwrap();
+                settings.ban_list.ban(id, Some(peer.ip));
+
+                peer.send(Packet::new(
+                    Uuid::nil(),
+                    Content::ChangeStage {
+                        stage: "baguette".to_string(),
+                        id: "dufromage".to_string(),
+                        scenario: 21,
+                        sub_scenario: 42,
+                    },
+                ))
+                .await;
+                settings.save().await;
+            }
+
+            info!("Banned {}", players.join(", "));
+        }
+        Command::Unknown { cmd } => {
+            println!(
+                "\n{} {}\n\n{}",
+                "Invalid command:".red(),
+                cmd,
+                Command::Unknown {
+                    cmd: "".to_string()
+                }
+                .help()
+                .to_string()
+            );
         }
     }
 }
