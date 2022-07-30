@@ -1,5 +1,5 @@
 use crate::{
-    packet::{ConnectionType, Content, Header, Packet, HEADER_SIZE},
+    packet::{ConnectionType, Content, Header, Packet, TagUpdate, HEADER_SIZE},
     peer::Peer,
     players::{Player, Players, SharedPlayer},
     settings::Settings,
@@ -352,32 +352,30 @@ impl Server {
                         }
                     }
                     Content::Tag {
-                        update_type: _,
+                        update_type,
                         is_it,
                         seconds,
                         minutes,
                     } => {
                         let mut player = player.write().await;
 
-                        player.is_seeking = *is_it;
-                        player.time =
-                            Duration::minutes(*minutes as i64) + Duration::seconds(*seconds as i64);
+                        info!(
+                            "{} is now {}",
+                            player.name,
+                            if *is_it { "seeker" } else { "hider" }
+                        );
+
+                        if (update_type & TagUpdate::State.as_byte()) != 0 {
+                            player.is_seeking = *is_it;
+                        }
+
+                        if (update_type & TagUpdate::Time.as_byte()) != 0 {
+                            player.time = Duration::minutes(*minutes as i64)
+                                + Duration::seconds(*seconds as i64);
+                        }
+
                         true
                     }
-                    // This case can't be handled for now
-                    // Content::Tag {
-                    //     update_type: TagUpdate::Time,
-                    //     is_it: _,
-                    //     seconds,
-                    //     minutes,
-                    // } => {
-                    //     let mut player = player.write().await;
-
-                    //     player.time =
-                    //         Duration::minutes(*minutes as i64) + Duration::seconds(*seconds as i64);
-
-                    //     true
-                    // }
                     Content::Shine { id, is_grand } => {
                         let mut player = player.write().await;
 

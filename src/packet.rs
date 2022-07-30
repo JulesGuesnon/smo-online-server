@@ -95,16 +95,7 @@ pub enum TagUpdate {
 }
 
 impl TagUpdate {
-    fn from_byte(byte: u8) -> Result<Self> {
-        match byte {
-            1 => Ok(Self::Time),
-            2 => Ok(Self::State),
-            // For now mods sends 3 so it basically match nothing
-            _ => Ok(Self::State),
-        }
-    }
-
-    fn as_byte(&self) -> u8 {
+    pub fn as_byte(&self) -> u8 {
         match self {
             Self::Time => 1,
             Self::State => 2,
@@ -163,7 +154,8 @@ pub enum Content {
         stage: String,
     },
     Tag {
-        update_type: TagUpdate,
+        // It's a bitfield
+        update_type: u8,
         is_it: bool,
         seconds: u16,
         minutes: u16,
@@ -271,7 +263,7 @@ impl Content {
                 seconds,
                 minutes,
             } => {
-                body.put_u8(update_type.as_byte());
+                body.put_u8(update_type.clone());
                 body.put_u8(is_it.as_byte());
                 body.put_u16_le(seconds.clone());
                 body.put_u16_le(minutes.clone());
@@ -354,7 +346,7 @@ impl Content {
                 stage: Self::deserialize_string(body.slice(2..0x42))?,
             },
             5 => Self::Tag {
-                update_type: TagUpdate::from_byte(body.slice(0..1).get_u8())?,
+                update_type: body.slice(0..1).get_u8(),
                 is_it: body.slice(1..2).get_u8().as_bool(),
                 seconds: body.slice(2..4).get_u16_le(),
                 minutes: body.slice(4..6).get_u16_le(),
