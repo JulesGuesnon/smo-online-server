@@ -67,12 +67,14 @@ impl Player {
 pub type SharedPlayer = Arc<RwLock<Player>>;
 pub struct Players {
     players: RwLock<HashMap<Uuid, SharedPlayer>>,
+    names: RwLock<HashMap<Uuid, String>>,
 }
 
 impl Players {
     pub fn new() -> Self {
         Self {
             players: RwLock::default(),
+            names: RwLock::default(),
         }
     }
 
@@ -86,6 +88,15 @@ impl Players {
         let players = self.players.read().await;
 
         players.keys().map(|k| k.clone()).collect()
+    }
+
+    pub async fn get_id_by_name(&self, username: String) -> Option<Uuid> {
+        let names = self.names.read().await;
+
+        names
+            .iter()
+            .find(|(id, name)| name.to_lowercase() == username)
+            .map(|(id, _)| id.clone())
     }
 
     // No idea when to remove a player for now
@@ -108,8 +119,12 @@ impl Players {
 
     pub async fn add(&self, player: Player) -> SharedPlayer {
         let mut players = self.players.write().await;
+        let mut names = self.names.write().await;
 
         let id = player.id.clone();
+
+        names.insert(id.clone(), player.name.clone());
+
         let player = Arc::new(RwLock::new(player));
 
         let player_ref = player.clone();

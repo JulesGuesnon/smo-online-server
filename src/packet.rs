@@ -3,7 +3,6 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use glam::{Quat, Vec3};
 use std::ops::Range;
 use std::str::from_utf8;
-use tracing::debug;
 use uuid::Uuid;
 
 const ID_RANGE: Range<usize> = 0..16;

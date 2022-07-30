@@ -46,7 +46,7 @@ impl Server {
         }
     }
 
-    async fn broadcast(&self, packet: Packet) {
+    pub async fn broadcast(&self, packet: Packet) {
         let peers = self.peers.read().await;
 
         join_all(
@@ -58,7 +58,7 @@ impl Server {
         .await;
     }
 
-    async fn broadcast_map<F, Fut>(&self, packet: Packet, map: F)
+    pub async fn broadcast_map<F, Fut>(&self, packet: Packet, map: F)
     where
         F: Fn(SharedPlayer, Packet) -> Fut,
         Fut: Future<Output = Packet>,
@@ -674,6 +674,38 @@ impl Server {
         *shines = deserialized;
 
         Ok(())
+    }
+
+    pub async fn disconnect_all(&self) {
+        let peers = self.peers.read().await;
+
+        join_all(peers.iter().map(|(_, peer)| peer.disconnect())).await;
+    }
+
+    pub async fn disconnect_by_name(&self, players: Vec<String>) {
+        let ids = join_all(
+            players
+                .into_iter()
+                .map(|name| self.players.get_id_by_name(name)),
+        )
+        .await
+        .into_iter()
+        .filter_map(|v| v);
+
+        let mut peers = self.peers.write().await;
+
+        for id in ids {
+            let peer = peers.get_mut(&id);
+
+            if peer.is_none() {
+                continue;
+            }
+
+            let peer = peer.unwrap();
+
+            peer.disconnect().await;
+            peer.connected = false;
+        }
     }
 }
 

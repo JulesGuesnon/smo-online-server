@@ -6,11 +6,11 @@ use tokio::{io, net::TcpListener, time::sleep};
 // use tracing::{debug, info};
 
 mod commands;
-// mod packet;
-// mod peer;
-// mod players;
-// mod server;
-// mod settings;
+mod packet;
+mod peer;
+mod players;
+mod server;
+mod settings;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {

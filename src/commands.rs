@@ -1,6 +1,18 @@
 use colored::Colorize;
-use std::vec;
+use std::{sync::Arc, vec};
+use tracing::info;
 
+use crate::{packet::Packet, server::Server};
+
+trait IsWildcard {
+    fn is_wildcard(&self) -> bool;
+}
+
+impl IsWildcard for Vec<String> {
+    fn is_wildcard(&self) -> bool {
+        self.contains(&String::from("*"))
+    }
+}
 pub enum Stage {
     Cap,
     Cascade,
@@ -124,12 +136,25 @@ impl Help {
     }
 }
 
-enum Command {
-    Rejoin { usernames: Vec<String> },
-    Crash { usernames: Vec<String> },
-    Ban { usernames: Vec<String> },
-    Send,
-    SendAll { stage: Stage },
+pub enum Command {
+    Rejoin {
+        players: Vec<String>,
+    },
+    Crash {
+        players: Vec<String>,
+    },
+    Ban {
+        players: Vec<String>,
+    },
+    Send {
+        stage: Stage,
+        id: String,
+        scenario: i8,
+        players: Vec<String>,
+    },
+    SendAll {
+        stage: Stage,
+    },
     Unknown,
 }
 
@@ -157,13 +182,25 @@ impl Command {
 
         let parsed = match cmd {
             "rejoin" => Self::Rejoin {
-                usernames: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
+                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
             },
             "crash" => Self::Crash {
-                usernames: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
+                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
             },
             "sendall" => Self::SendAll {
                 stage: Stage::from_str(splitted.remove(0))?,
+            },
+            "send" if splitted.len() < 4 => {
+                return Err(Self::default_from_str("send").help().to_string());
+            }
+            "send" => Self::Send {
+                stage: Stage::from_str(splitted.remove(0))?,
+                id: splitted.remove(0).to_string(),
+                scenario: splitted
+                    .remove(0)
+                    .parse::<i8>()
+                    .map_err(|_| "Scenario should be a number between -1 and 127".to_string())?,
+                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
             },
             _ => Self::Unknown,
         };
@@ -173,10 +210,15 @@ impl Command {
 
     pub fn default_from_str(string: &str) -> Self {
         match string {
-            "rejoin" => Self::Rejoin { usernames: vec![] },
-            "crash" => Self::Crash { usernames: vec![] },
-            "ban" => Self::Ban { usernames: vec![] },
-            "send" => Self::Send,
+            "rejoin" => Self::Rejoin { players: vec![] },
+            "crash" => Self::Crash { players: vec![] },
+            "ban" => Self::Ban { players: vec![] },
+            "send" => Self::Send {
+                stage: Stage::Cap,
+                id: "".to_string(),
+                scenario: 0,
+                players: vec![],
+            },
             "sendAll" => Self::SendAll { stage: Stage::Cap },
             _ => Self::Unknown,
         }
@@ -184,19 +226,24 @@ impl Command {
 
     pub fn help(&self) -> Help {
         match self {
-            Self::Rejoin { usernames: _ } => Help::new(
+            Self::Rejoin { players: _ } => Help::new(
                 "rejoin <username 1|*> <username 2> ...",
                 "Will force player to disconnect and reconnect",
             ),
-            Self::Crash { usernames: _ } => {
+            Self::Crash { players: _ } => {
                 Help::new("crash <username 1|*> <username 2> ...", "Will crash player")
             }
-            Self::Ban { usernames: _ } => {
+            Self::Ban { players: _ } => {
                 Help::new("ban <username 1|*> <username 2> ...", "Will ban player")
             }
-            Self::Send => Help::new(
+            Self::Send {
+                stage: _,
+                id: _,
+                scenario: _,
+                players: _,
+            } => Help::new(
                 "send <stage> <id> <scenario[-1..127]> <username 1|*> <username 2> ...",
-                "Will teleport player to the wanted place",
+                "Will teleport player to the wanted stage and scenario",
             ),
             Self::SendAll { stage: _ } => Help::new(
                 "sendall <stage> ",
@@ -214,7 +261,25 @@ pub async fn listen() {
                 continue;
             }
 
-            let _ = Command::parse(line.unwrap());
+            match Command::parse(line.unwrap()) {
+                Ok(_) => {
+                    println!("TODO: ");
+                }
+                Err(message) => println!("{}", message),
+            };
+        }
+    }
+}
+
+async fn exec_cmd(server: Arc<Server>, cmd: Command) {
+    match cmd {
+        Command::Rejoin { players } if players.is_wildcard() => {
+            server.disconnect_all().await;
+            info!("Disconnected everyone");
+        }
+        Command::Rejoin { players } => {
+            server.disconnect_by_name(players.clone()).await;
+            info!("Disconnected {}", players.join(", "));
         }
     }
 }
