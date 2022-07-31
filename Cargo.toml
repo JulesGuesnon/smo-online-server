@@ -1,7 +1,15 @@
 [package]
-name = "smo_server"
+name = "smo-online-server"
+authors = ["Jules Guesnon"]
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/JulesGuesnon/smo-online-server"
+keywords = ["mario", "smo", "online", "server"]
+categories = ["game"]
+readme = "readme.md"
+description = """
+A server to player Super Mario Odyssey online
+"""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

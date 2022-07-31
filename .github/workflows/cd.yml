@@ -46,6 +46,10 @@ jobs:
             os: windows-latest
             rust: stable
             target: x86_64-pc-windows-gnu
+    env:
+      NAME: smo-online-server
+      TARGET: ${{ matrix.target }}
+      OS: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
