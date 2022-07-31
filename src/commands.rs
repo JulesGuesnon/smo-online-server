@@ -1,12 +1,11 @@
 use crate::{
     packet::{Content, Packet, TagUpdate},
-    peer,
     server::Server,
     settings::{FlipPov, Settings},
 };
 use colored::Colorize;
 use futures::future::join_all;
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{process::exit, str::FromStr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     time::sleep,
@@ -246,6 +245,7 @@ pub enum Command {
     Shine {
         subcmd: ShineSubCmd,
     },
+    Exit,
     Unknown {
         cmd: String,
     },
@@ -271,7 +271,7 @@ impl Command {
 
         let cmd = splitted.remove(0);
 
-        if splitted.len() == 0 && cmd != "list" {
+        if splitted.len() == 0 && (cmd != "list" && cmd != "exit" && cmd != "loadsettings") {
             let cmd = Self::default_from_str(cmd);
             return match &cmd {
                 Self::Unknown { cmd: _ } => Ok(cmd),
@@ -427,6 +427,8 @@ impl Command {
                 },
                 _ => return Err(Self::default_from_str("shine").help().to_string()),
             },
+            "exit" => Self::Exit,
+            "loadsettings" => Self::LoadSettings,
             v => Self::Unknown { cmd: v.to_string() },
         };
 
@@ -464,6 +466,7 @@ impl Command {
             "shine" => Self::Shine {
                 subcmd: ShineSubCmd::List,
             },
+            "exit" => Self::Exit,
             v => Self::Unknown { cmd: v.to_string() },
         }
     }
@@ -559,6 +562,7 @@ impl Command {
                     &format!("{}\n{}\n{}\n{}\n{}", list_desc, add_desc, remove_desc, set_desc, pov_desc)
                 )
             },
+            Self::Exit => Help::new("exit", "Will exit the server"),
             Self::Unknown { cmd: _ } => Help::merge(vec![
                 Self::default_from_str("rejoin").help(),
                 Self::default_from_str("crash").help(),
@@ -572,6 +576,7 @@ impl Command {
                 Self::default_from_str("tag").help(),
                 Self::default_from_str("flip").help(),
                 Self::default_from_str("shine").help(),
+                Self::default_from_str("exit").help(),
             ]),
         }
     }
@@ -777,9 +782,11 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 if value.as_str() == "true" {
                     settings.scenario.merge_enabled = true;
                     settings.save().await;
+                    info!("Updated merge to {}", true);
                 } else if value.as_str() == "false" {
-                    settings.scenario.merge_enabled = true;
+                    settings.scenario.merge_enabled = false;
                     settings.save().await;
+                    info!("Updated merge to {}", false);
                 } else {
                     println!(
                         "{}",
@@ -797,6 +804,8 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
 
             settings.server.max_players = count as i16;
             settings.save().await;
+
+            info!("Updated max players to {}", count);
         }
         Command::List => {
             let connected = server.connected_peers().await;
@@ -815,7 +824,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 )
             });
 
-            println!("{}", list);
+            println!("Connected players: \n{}", list);
         }
         Command::LoadSettings => {
             let updated = Settings::load().await;
@@ -1065,6 +1074,9 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
             }
 
             info!("Sent moon {} to {}", id, players.join(", "));
+        }
+        Command::Exit => {
+            exit(0);
         }
         Command::Unknown { cmd } => {
             println!(
