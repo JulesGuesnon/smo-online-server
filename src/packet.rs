@@ -51,12 +51,12 @@ impl AsBytes for Quat {
     }
 
     fn from_bytes(mut bytes: Bytes) -> Self {
-        Self {
-            x: bytes.get_f32_le(),
-            y: bytes.get_f32_le(),
-            z: bytes.get_f32_le(),
-            w: bytes.get_f32_le(),
-        }
+        Quat::from_xyzw(
+            bytes.get_f32_le(),
+            bytes.get_f32_le(),
+            bytes.get_f32_le(),
+            bytes.get_f32_le(),
+        )
     }
 }
 
