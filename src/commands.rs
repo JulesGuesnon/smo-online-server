@@ -1,12 +1,15 @@
 use crate::{
-    packet::{Content, Packet},
+    packet::{Content, Packet, TagUpdate},
     server::Server,
     settings::Settings,
 };
 use colored::Colorize;
 use futures::future::join_all;
-use std::{sync::Arc, vec};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    time::sleep,
+};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -164,6 +167,29 @@ impl Help {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum TagState {
+    Seeker,
+    Hider,
+}
+
+#[derive(Debug)]
+pub enum TagSubCmd {
+    Time {
+        username: String,
+        minutes: u16,
+        seconds: u8,
+    },
+    Seeking {
+        username: String,
+        state: TagState,
+    },
+    Start {
+        time: u8,
+        seekers: Vec<String>,
+    },
+}
+
 #[derive(Debug)]
 pub enum Command {
     Rejoin {
@@ -193,6 +219,9 @@ pub enum Command {
     },
     List,
     LoadSettings,
+    Tag {
+        subcmd: TagSubCmd,
+    },
     Unknown {
         cmd: String,
     },
@@ -271,6 +300,53 @@ impl Command {
                     .map_err(|_| "Count should be a positive integer")?,
             },
             "list" => Self::List,
+            "tag" if splitted.len() < 4 => {
+                return Err(Self::default_from_str("tag").help().to_string());
+            }
+            "tag" => {
+                let subcmd = splitted.remove(0);
+
+                match subcmd {
+                    "time" if splitted.len() == 3 => Self::Tag {
+                        subcmd: TagSubCmd::Time {
+                            username: splitted.remove(0).to_string(),
+                            minutes: splitted.remove(0).parse().map_err(|_| {
+                                "Invalid mintues, value should be an integer between 0 and 65535"
+                            })?,
+                            seconds: splitted.remove(0).parse().map_err(|_| {
+                                "Invalid seconds, value should be an integer between 0 and 255"
+                            })?,
+                        },
+                    },
+                    "seeking" if splitted.len() == 2 => Self::Tag {
+                        subcmd: TagSubCmd::Seeking {
+                            username: splitted.remove(0).to_string(),
+                            state: match splitted.remove(0) {
+                                "seeker" => TagState::Seeker,
+                                "hider" => TagState::Hider,
+                                v => {
+                                    return Err(format!(
+                                        "Invalid value '{}', expected 'seeker' or 'hider'",
+                                        v
+                                    ));
+                                }
+                            },
+                        },
+                    },
+                    "start" if splitted.len() >= 2 => Self::Tag {
+                        subcmd: TagSubCmd::Start {
+                            time: splitted
+                                .remove(0)
+                                .parse()
+                                .map_err(|_| "Invalid time, value should be between 0 and 255")?,
+                            seekers: splitted.into_iter().map(String::from).collect(),
+                        },
+                    },
+                    _ => {
+                        return Err(Self::default_from_str("tag").help().to_string());
+                    }
+                }
+            }
             v => Self::Unknown { cmd: v.to_string() },
         };
 
@@ -296,6 +372,12 @@ impl Command {
             "maxplayers" => Self::MaxPlayers { count: 0 },
             "list" => Self::List,
             "loadsettings" => Self::LoadSettings,
+            "tag" => Self::Tag {
+                subcmd: TagSubCmd::Seeking {
+                    username: "".to_string(),
+                    state: TagState::Hider,
+                },
+            },
             v => Self::Unknown { cmd: v.to_string() },
         }
     }
@@ -335,12 +417,32 @@ impl Command {
             ),
             Self::List => Help::new("list", "List all the connected players"),
             Self::LoadSettings => Help::new("loadsettings", "Load the settings into the server. Do ift after changing the settings while the server is running"),
+            Self::Tag { subcmd: _ } => {
+                let time_usage = "- tag time <username|*> <mintues[0-65535]> <seconds[0-59]>";
+                let time_desc = format!("- {} set the time for 1 player or everyone if username is *", "tag time".cyan());
+
+                let seeking = "- tag seeking <username|*> <hider|seeker>";
+                let seeking_desc = format!("- {} allows to set the player as a hider or seeker. You can set everyone role if the username is *", "tag seeking".cyan());
+
+                let start = "- tag start <time[0-255]> <username 1> <username 2> ...";
+                let start_desc = format!("- {} will start the game after the input time is over and set the input players to seeker and the rest to hider", "tag start".cyan());
+
+                Help::new(
+                    &format!("{}\n{}\n{}", time_usage, seeking, start), 
+                    &format!("{}\n{}\n{}", time_desc, seeking_desc, start_desc)
+                )
+            },
             Self::Unknown { cmd: _ } => Help::merge(vec![
                 Self::default_from_str("rejoin").help(),
                 Self::default_from_str("crash").help(),
                 Self::default_from_str("ban").help(),
                 Self::default_from_str("send").help(),
                 Self::default_from_str("sendall").help(),
+                Self::default_from_str("scenario").help(),
+                Self::default_from_str("maxplayers").help(),
+                Self::default_from_str("list").help(),
+                Self::default_from_str("loadsettings").help(),
+                Self::default_from_str("tag").help(),
             ]),
         }
     }
@@ -592,6 +694,113 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
             let mut settings = server.settings.write().await;
 
             *settings = updated;
+        }
+        Command::Tag {
+            subcmd:
+                TagSubCmd::Time {
+                    username,
+                    minutes,
+                    seconds,
+                },
+        } => {
+            let packet = Packet::new(
+                Uuid::nil(),
+                Content::Tag {
+                    update_type: TagUpdate::Time.as_byte(),
+                    is_it: false,
+                    seconds: seconds as u16,
+                    minutes,
+                },
+            );
+
+            if username.as_str() == "*" {
+                server.broadcast(packet).await;
+            } else if let Some(id) = server.players.get_id_by_name(username.clone()).await {
+                match server.send_to(&id, packet).await {
+                    Ok(_) => info!("Updated time of {}", username),
+                    Err(_) => info!("Couldn't find player {}", username),
+                }
+            }
+        }
+        Command::Tag {
+            subcmd: TagSubCmd::Seeking { username, state },
+        } => {
+            let packet = Packet::new(
+                Uuid::nil(),
+                Content::Tag {
+                    update_type: TagUpdate::State.as_byte(),
+                    is_it: state == TagState::Seeker,
+                    seconds: 0,
+                    minutes: 0,
+                },
+            );
+
+            if username.as_str() == "*" {
+                server.broadcast(packet).await;
+            } else if let Some(id) = server.players.get_id_by_name(username.clone()).await {
+                match server.send_to(&id, packet).await {
+                    Ok(_) => info!("Updated time of {}", username),
+                    Err(_) => info!("Couldn't find player {}", username),
+                }
+            }
+        }
+        Command::Tag {
+            subcmd:
+                TagSubCmd::Start {
+                    time,
+                    seekers: will_seek,
+                },
+        } => {
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(time as u64)).await;
+
+                let players = server.players.all_ids_and_names().await;
+
+                let [seekers, hiders] = players.into_iter().fold(
+                    [vec![], vec![]],
+                    |[mut seekers, mut hiders], (id, username)| {
+                        if will_seek.contains(&username) {
+                            seekers.push(id);
+                        } else {
+                            hiders.push(id);
+                        }
+
+                        [seekers, hiders]
+                    },
+                );
+
+                let peers = server.peers.read().await;
+
+                for id in seekers {
+                    if let Some(peer) = peers.get(&id) {
+                        peer.send(Packet::new(
+                            Uuid::nil(),
+                            Content::Tag {
+                                update_type: TagUpdate::State.as_byte(),
+                                is_it: true,
+                                seconds: 0,
+                                minutes: 0,
+                            },
+                        ))
+                        .await
+                    }
+                }
+
+                for id in hiders {
+                    if let Some(peer) = peers.get(&id) {
+                        peer.send(Packet::new(
+                            Uuid::nil(),
+                            Content::Tag {
+                                update_type: TagUpdate::State.as_byte(),
+                                is_it: false,
+                                seconds: 0,
+                                minutes: 0,
+                            },
+                        ))
+                        .await
+                    }
+                }
+            });
         }
         Command::Unknown { cmd } => {
             println!(

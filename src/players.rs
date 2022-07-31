@@ -104,6 +104,22 @@ impl Players {
         players.keys().map(|k| k.clone()).collect()
     }
 
+    pub async fn all_ids_and_names(&self) -> Vec<(Uuid, String)> {
+        let players = self.players.read().await;
+
+        let players = join_all(
+            players
+                .iter()
+                .map(|(id, p)| async { (id.clone(), p.read().await) }),
+        )
+        .await;
+
+        players
+            .into_iter()
+            .map(|(id, player)| (id, player.name.clone()))
+            .collect()
+    }
+
     pub async fn get_id_by_name(&self, username: String) -> Option<Uuid> {
         let names = self.names.read().await;
 

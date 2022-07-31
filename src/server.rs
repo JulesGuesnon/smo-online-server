@@ -79,6 +79,18 @@ impl Server {
         .await;
     }
 
+    pub async fn send_to(&self, id: &Uuid, packet: Packet) -> Result<()> {
+        let peers = self.peers.read().await;
+
+        if let Some(peer) = peers.get(id) {
+            peer.send(packet).await;
+
+            Ok(())
+        } else {
+            Err(anyhow!("User {} not found", id))
+        }
+    }
+
     pub async fn connected_peers(&self) -> Vec<Uuid> {
         let peers = self.peers.read().await;
 
