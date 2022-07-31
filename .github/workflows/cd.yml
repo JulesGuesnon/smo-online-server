@@ -155,6 +155,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out code
+        uses: actions/checkout@v3
       - name: Build image
         run: docker build -t ghcr.io/julesguesnon/smo-online-server:latest .
       - name: Tag image
