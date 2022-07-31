@@ -1,5 +1,6 @@
 use crate::{
     packet::{Content, Packet, TagUpdate},
+    peer,
     server::Server,
     settings::{FlipPov, Settings},
 };
@@ -200,6 +201,14 @@ pub enum FlipSubCmd {
 }
 
 #[derive(Debug)]
+pub enum ShineSubCmd {
+    List,
+    Clear,
+    Sync,
+    Send { id: i32, players: Vec<String> },
+}
+
+#[derive(Debug)]
 pub enum Command {
     Rejoin {
         players: Vec<String>,
@@ -234,12 +243,12 @@ pub enum Command {
     Flip {
         subcmd: FlipSubCmd,
     },
+    Shine {
+        subcmd: ShineSubCmd,
+    },
     Unknown {
         cmd: String,
     },
-    //shine
-    //flip
-    //tag
 }
 
 impl Command {
@@ -395,6 +404,29 @@ impl Command {
                     return Err(Self::default_from_str("flip").help().to_string());
                 }
             },
+            "shine" => match splitted.remove(0) {
+                "list" => Self::Shine {
+                    subcmd: ShineSubCmd::List,
+                },
+                "clear" => Self::Shine {
+                    subcmd: ShineSubCmd::Clear,
+                },
+                "sync" => Self::Shine {
+                    subcmd: ShineSubCmd::Sync,
+                },
+                "send" if splitted.len() >= 2 => Self::Shine {
+                    subcmd: ShineSubCmd::Send {
+                        id: splitted
+                            .remove(0)
+                            .parse()
+                            .map_err(|_| "Invalid moon id, it should be a number")?,
+                        players: Self::wildcard_filter(
+                            splitted.into_iter().map(String::from).collect(),
+                        ),
+                    },
+                },
+                _ => return Err(Self::default_from_str("shine").help().to_string()),
+            },
             v => Self::Unknown { cmd: v.to_string() },
         };
 
@@ -428,6 +460,9 @@ impl Command {
             },
             "flip" => Self::Flip {
                 subcmd: FlipSubCmd::List,
+            },
+            "shine" => Self::Shine {
+                subcmd: ShineSubCmd::List,
             },
             v => Self::Unknown { cmd: v.to_string() },
         }
@@ -469,13 +504,13 @@ impl Command {
             Self::List => Help::new("list", "List all the connected players"),
             Self::LoadSettings => Help::new("loadsettings", "Load the settings into the server. Do ift after changing the settings while the server is running"),
             Self::Tag { subcmd: _ } => {
-                let time_usage = "- tag time <username|*> <mintues[0-65535]> <seconds[0-59]>";
+                let time_usage = "tag time <username|*> <mintues[0-65535]> <seconds[0-59]>";
                 let time_desc = format!("- {} set the time for 1 player or everyone if username is *", "tag time".cyan());
 
-                let seeking = "- tag seeking <username|*> <hider|seeker>";
+                let seeking = "tag seeking <username|*> <hider|seeker>";
                 let seeking_desc = format!("- {} allows to set the player as a hider or seeker. You can set everyone role if the username is *", "tag seeking".cyan());
 
-                let start = "- tag start <time[0-255]> <username 1> <username 2> ...";
+                let start = "tag start <time[0-255]> <username 1> <username 2> ...";
                 let start_desc = format!("- {} will start the game after the input time is over and set the input players to seeker and the rest to hider", "tag start".cyan());
 
                 Help::new(
@@ -484,19 +519,38 @@ impl Command {
                 )
             },
             Self::Flip { subcmd: _ } => {
-                let list = "- flip list";
+                let list = "shine list";
+                let list_desc = format!("- {} list the ids of the collected moons", "shine list".cyan());
+
+                let clear = "shine clear";
+                let clear_desc = format!("- {} will delete all the collected moons", "shine clean".cyan());
+
+                let sync = "shine sync";
+                let sync_desc = format!("- {} will force the sync of the moons", "shine sync".cyan());
+
+                let send = "shine send <id> <username 1|*> <username 2> ...";
+                let send_desc = format!("- {} will send a moon to a player or everyone if username is *", "shine send".cyan());
+
+
+                Help::new(
+                    &format!("{}\n{}\n{}\n{}", list, clear, sync, send), 
+                    &format!("{}\n{}\n{}\n{}", list_desc, clear_desc, sync_desc, send_desc)
+                )
+            },
+            Self::Shine { subcmd: _ } => {
+                let list = "flip list";
                 let list_desc = format!("- {} list the ids of the flipped players", "flip list".cyan());
 
-                let add = "- flip add <user id>";
+                let add = "flip add <user id>";
                 let add_desc = format!("- {} will add a user to the flip list", "flip add".cyan());
 
-                let remove = "- flip remove <user id>";
+                let remove = "flip remove <user id>";
                 let remove_desc = format!("- {} will remove a user to the flip list", "flip remove".cyan());
 
-                let set = "- flip set <true|false>";
+                let set = "flip set <true|false>";
                 let set_desc = format!("- {} will enable or disable flip", "flip set".cyan());
 
-                let pov = "- flip pov <self|others|both>";
+                let pov = "flip pov <self|others|both>";
                 let pov_desc = format!("- {} will update the point of view", "flip pov".cyan());
 
 
@@ -517,6 +571,7 @@ impl Command {
                 Self::default_from_str("loadsettings").help(),
                 Self::default_from_str("tag").help(),
                 Self::default_from_str("flip").help(),
+                Self::default_from_str("shine").help(),
             ]),
         }
     }
@@ -538,7 +593,7 @@ pub async fn listen(server: Arc<Server>) {
         if let Some(line) = line {
             match Command::parse(line) {
                 Ok(cmd) => exec_cmd(server.clone(), cmd).await,
-                Err(message) => println!("{}\n{}", "[Error]".red(), message),
+                Err(message) => println!("\n{}\n{}", "[Error]".red(), message),
             };
         }
     }
@@ -945,6 +1000,71 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
             settings.save().await;
 
             info!("Set pov to {}", pov.to_str());
+        }
+        Command::Shine {
+            subcmd: ShineSubCmd::List,
+        } => {
+            let bag = server.shine_bag.read().await;
+
+            let string = bag.iter().fold("".to_string(), |acc, (id, is_grand)| {
+                format!(
+                    "{}{}{}",
+                    acc,
+                    id,
+                    if *is_grand { " (grand), " } else { ", " }
+                )
+            });
+
+            info!("{}", string);
+        }
+        Command::Shine {
+            subcmd: ShineSubCmd::Clear,
+        } => {
+            let mut bag = server.shine_bag.write().await;
+
+            bag.clear();
+
+            info!("Cleared all the moons");
+        }
+        Command::Shine {
+            subcmd: ShineSubCmd::Sync,
+        } => {
+            server.sync_shine_bag().await;
+
+            info!("Synced moons");
+        }
+        Command::Shine {
+            subcmd: ShineSubCmd::Send { id, players },
+        } => {
+            let packet = Packet::new(
+                Uuid::nil(),
+                Content::Shine {
+                    id,
+                    is_grand: false,
+                },
+            );
+
+            if players.is_wildcard() {
+                server.broadcast(packet).await
+            } else {
+                let peers = server.peers.read().await;
+
+                for username in players.clone() {
+                    let id = server.players.get_id_by_name(username).await;
+
+                    if id.is_none() {
+                        continue;
+                    }
+
+                    let id = id.unwrap();
+
+                    if let Some(peer) = peers.get(&id) {
+                        peer.send(packet.clone()).await;
+                    }
+                }
+            }
+
+            info!("Sent moon {} to {}", id, players.join(", "));
         }
         Command::Unknown { cmd } => {
             println!(

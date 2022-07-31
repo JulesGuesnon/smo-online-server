@@ -27,7 +27,7 @@ use uuid::Uuid;
 pub struct Server {
     pub peers: RwLock<HashMap<Uuid, Peer>>,
     // (id, is_grand)
-    shine_bag: RwLock<HashSet<(i32, bool)>>,
+    pub shine_bag: RwLock<HashSet<(i32, bool)>>,
     pub players: Players,
     pub settings: RwLock<Settings>,
 }
