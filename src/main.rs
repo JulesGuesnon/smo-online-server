@@ -8,6 +8,7 @@ use tokio::{
     time::sleep,
 };
 use tracing::{debug, info};
+use tracing_subscriber::EnvFilter;
 
 mod commands;
 mod packet;
@@ -18,7 +19,11 @@ mod settings;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    tracing_subscriber::fmt::init();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_str("info").unwrap())
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let settings = Settings::load().await;
 

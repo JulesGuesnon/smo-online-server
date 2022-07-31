@@ -245,7 +245,7 @@ pub enum Command {
     Shine {
         subcmd: ShineSubCmd,
     },
-    Exit,
+    Stop,
     Unknown {
         cmd: String,
     },
@@ -271,7 +271,7 @@ impl Command {
 
         let cmd = splitted.remove(0);
 
-        if splitted.len() == 0 && (cmd != "list" && cmd != "exit" && cmd != "loadsettings") {
+        if splitted.len() == 0 && (cmd != "list" && cmd != "stop" && cmd != "loadsettings") {
             let cmd = Self::default_from_str(cmd);
             return match &cmd {
                 Self::Unknown { cmd: _ } => Ok(cmd),
@@ -427,7 +427,7 @@ impl Command {
                 },
                 _ => return Err(Self::default_from_str("shine").help().to_string()),
             },
-            "exit" => Self::Exit,
+            "stop" => Self::Stop,
             "loadsettings" => Self::LoadSettings,
             v => Self::Unknown { cmd: v.to_string() },
         };
@@ -466,7 +466,7 @@ impl Command {
             "shine" => Self::Shine {
                 subcmd: ShineSubCmd::List,
             },
-            "exit" => Self::Exit,
+            "stop" => Self::Stop,
             v => Self::Unknown { cmd: v.to_string() },
         }
     }
@@ -562,7 +562,7 @@ impl Command {
                     &format!("{}\n{}\n{}\n{}\n{}", list_desc, add_desc, remove_desc, set_desc, pov_desc)
                 )
             },
-            Self::Exit => Help::new("exit", "Will exit the server"),
+            Self::Stop => Help::new("stop", "Will stop the server"),
             Self::Unknown { cmd: _ } => Help::merge(vec![
                 Self::default_from_str("rejoin").help(),
                 Self::default_from_str("crash").help(),
@@ -576,7 +576,7 @@ impl Command {
                 Self::default_from_str("tag").help(),
                 Self::default_from_str("flip").help(),
                 Self::default_from_str("shine").help(),
-                Self::default_from_str("exit").help(),
+                Self::default_from_str("stop").help(),
             ]),
         }
     }
@@ -585,23 +585,33 @@ impl Command {
 pub async fn listen(server: Arc<Server>) {
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
 
-    loop {
-        let line = stdin.next_line().await;
+    let task = async move {
+        loop {
+            let line = stdin.next_line().await;
 
-        if line.is_err() {
-            error!("Failed to read stdin {}", line.unwrap_err());
-            continue;
+            if line.is_err() {
+                error!("Failed to read stdin {}", line.unwrap_err());
+                continue;
+            }
+
+            let line = line.unwrap();
+
+            if let Some(line) = line {
+                match Command::parse(line) {
+                    Ok(cmd) => exec_cmd(server.clone(), cmd).await,
+                    Err(message) => println!("\n{}\n{}", "[Error]".red(), message),
+                };
+            }
         }
+    };
 
-        let line = line.unwrap();
-
-        if let Some(line) = line {
-            match Command::parse(line) {
-                Ok(cmd) => exec_cmd(server.clone(), cmd).await,
-                Err(message) => println!("\n{}\n{}", "[Error]".red(), message),
-            };
-        }
-    }
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Stopping the server");
+            exit(0);
+        },
+        _ = task => {}
+    };
 }
 
 async fn exec_cmd(server: Arc<Server>, cmd: Command) {
@@ -1075,7 +1085,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
 
             info!("Sent moon {} to {}", id, players.join(", "));
         }
-        Command::Exit => {
+        Command::Stop => {
             exit(0);
         }
         Command::Unknown { cmd } => {

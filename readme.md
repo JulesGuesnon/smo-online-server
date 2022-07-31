@@ -12,6 +12,8 @@ There's mutliple way to run a server.
 docker run --rm -it -v "$PWD/settings.json":/settings.json -p 0.0.0.0:1027:1027 ghcr.io/julesguesnon/smo-online-server
 ```
 
+ctrl+pq
+
 ```bash
-docker run -v "$PWD/settings.json":/settings.json -p 0.0.0.0:1027:1027 -d ghcr.io/julesguesnon/smo-online-server
+docker run -d -i -v "$PWD/settings.json":/settings.json -p 0.0.0.0:1027:1027 ghcr.io/julesguesnon/smo-online-server
 ```
