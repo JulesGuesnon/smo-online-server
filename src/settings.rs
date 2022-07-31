@@ -7,11 +7,33 @@ use tokio::{
 use tracing::info;
 use uuid::Uuid;
 
-#[derive(PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub enum FlipPov {
     Both,
     Self_,
     Others,
+}
+
+impl FlipPov {
+    pub fn from_str(string: &str) -> Result<Self, String> {
+        match string.to_lowercase().as_str() {
+            "both" => Ok(Self::Both),
+            "self" => Ok(Self::Self_),
+            "others" => Ok(Self::Others),
+            v => Err(format!(
+                "Invalid value {}, expected both or self or others",
+                v
+            )),
+        }
+    }
+
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::Others => "others",
+            Self::Self_ => "self",
+        }
+    }
 }
 
 impl Default for FlipPov {

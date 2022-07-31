@@ -1,11 +1,11 @@
 use crate::{
     packet::{Content, Packet, TagUpdate},
     server::Server,
-    settings::Settings,
+    settings::{FlipPov, Settings},
 };
 use colored::Colorize;
 use futures::future::join_all;
-use std::{sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     time::sleep,
@@ -191,6 +191,15 @@ pub enum TagSubCmd {
 }
 
 #[derive(Debug)]
+pub enum FlipSubCmd {
+    List,
+    Add { user_id: Uuid },
+    Remove { user_id: Uuid },
+    Set { enabled: bool },
+    Pov { pov: FlipPov },
+}
+
+#[derive(Debug)]
 pub enum Command {
     Rejoin {
         players: Vec<String>,
@@ -221,6 +230,9 @@ pub enum Command {
     LoadSettings,
     Tag {
         subcmd: TagSubCmd,
+    },
+    Flip {
+        subcmd: FlipSubCmd,
     },
     Unknown {
         cmd: String,
@@ -347,6 +359,42 @@ impl Command {
                     }
                 }
             }
+            "flip" if splitted.len() < 1 => {
+                return Err(Self::default_from_str("flip").help().to_string());
+            }
+            "flip" => match splitted.remove(0) {
+                "list" => Command::Flip {
+                    subcmd: FlipSubCmd::List,
+                },
+                "add" if splitted.len() == 1 => Command::Flip {
+                    subcmd: FlipSubCmd::Add {
+                        user_id: Uuid::from_str(splitted.remove(0))
+                            .map_err(|_| "Invalid player id")?,
+                    },
+                },
+                "remove" if splitted.len() == 1 => Command::Flip {
+                    subcmd: FlipSubCmd::Remove {
+                        user_id: Uuid::from_str(splitted.remove(0))
+                            .map_err(|_| "Invalid player id")?,
+                    },
+                },
+                "set" if splitted.len() == 1 => Command::Flip {
+                    subcmd: FlipSubCmd::Set {
+                        enabled: splitted
+                            .remove(0)
+                            .parse()
+                            .map_err(|_| "Invalid value, expected true or false")?,
+                    },
+                },
+                "pov" if splitted.len() == 1 => Command::Flip {
+                    subcmd: FlipSubCmd::Pov {
+                        pov: FlipPov::from_str(splitted.remove(0))?,
+                    },
+                },
+                _ => {
+                    return Err(Self::default_from_str("flip").help().to_string());
+                }
+            },
             v => Self::Unknown { cmd: v.to_string() },
         };
 
@@ -377,6 +425,9 @@ impl Command {
                     username: "".to_string(),
                     state: TagState::Hider,
                 },
+            },
+            "flip" => Self::Flip {
+                subcmd: FlipSubCmd::List,
             },
             v => Self::Unknown { cmd: v.to_string() },
         }
@@ -430,6 +481,28 @@ impl Command {
                 Help::new(
                     &format!("{}\n{}\n{}", time_usage, seeking, start), 
                     &format!("{}\n{}\n{}", time_desc, seeking_desc, start_desc)
+                )
+            },
+            Self::Flip { subcmd: _ } => {
+                let list = "- flip list";
+                let list_desc = format!("- {} list the ids of the flipped players", "flip list".cyan());
+
+                let add = "- flip add <user id>";
+                let add_desc = format!("- {} will add a user to the flip list", "flip add".cyan());
+
+                let remove = "- flip remove <user id>";
+                let remove_desc = format!("- {} will remove a user to the flip list", "flip remove".cyan());
+
+                let set = "- flip set <true|false>";
+                let set_desc = format!("- {} will enable or disable flip", "flip set".cyan());
+
+                let pov = "- flip pov <self|others|both>";
+                let pov_desc = format!("- {} will update the point of view", "flip pov".cyan());
+
+
+                Help::new(
+                    &format!("{}\n{}\n{}\n{}\n{}", list, add, remove, set, pov), 
+                    &format!("{}\n{}\n{}\n{}\n{}", list_desc, add_desc, remove_desc, set_desc, pov_desc)
                 )
             },
             Self::Unknown { cmd: _ } => Help::merge(vec![
@@ -801,6 +874,76 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                     }
                 }
             });
+        }
+        Command::Flip {
+            subcmd: FlipSubCmd::List,
+        } => {
+            let settings = server.settings.read().await;
+
+            info!(
+                "User ids: {}",
+                settings
+                    .flip
+                    .players
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            );
+        }
+        Command::Flip {
+            subcmd: FlipSubCmd::Add { user_id },
+        } => {
+            let settings = server.settings.read().await;
+
+            if !settings.flip.players.contains(&user_id) {
+                drop(settings);
+                let mut settings = server.settings.write().await;
+                settings.flip.players.push(user_id.clone());
+
+                settings.save().await;
+
+                info!("Added {} to flip list", user_id);
+            } else {
+                info!("Player {} was already in the list", user_id);
+            }
+        }
+        Command::Flip {
+            subcmd: FlipSubCmd::Remove { user_id },
+        } => {
+            let settings = server.settings.read().await;
+
+            if settings.flip.players.contains(&user_id) {
+                drop(settings);
+                let mut settings = server.settings.write().await;
+                settings.flip.players.retain(|v| *v != user_id);
+
+                settings.save().await;
+
+                info!("Removed {} from the flip list", user_id);
+            } else {
+                info!("Player {} wasn't in the list", user_id);
+            }
+        }
+        Command::Flip {
+            subcmd: FlipSubCmd::Set { enabled },
+        } => {
+            let mut settings = server.settings.write().await;
+            settings.flip.enabled = enabled;
+
+            settings.save().await;
+
+            info!("{} flip", if enabled { "Enabled" } else { "Disabled" });
+        }
+        Command::Flip {
+            subcmd: FlipSubCmd::Pov { pov },
+        } => {
+            let mut settings = server.settings.write().await;
+            settings.flip.pov = pov.clone();
+
+            settings.save().await;
+
+            info!("Set pov to {}", pov.to_str());
         }
         Command::Unknown { cmd } => {
             println!(
