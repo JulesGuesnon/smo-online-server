@@ -516,6 +516,7 @@ impl Command {
                 Self::default_from_str("list").help(),
                 Self::default_from_str("loadsettings").help(),
                 Self::default_from_str("tag").help(),
+                Self::default_from_str("flip").help(),
             ]),
         }
     }
