@@ -8,10 +8,10 @@ RUN cargo build --release
 
 FROM gcr.io/distroless/cc
 
-COPY --from=builder /app/target/release/smo_server /
+COPY --from=builder /app/target/release/smo-online-server /
 
 EXPOSE 1207
 
 ENV RUST_LOG info
 
-CMD ["./smo_server"]
+ENTRYPOINT ["./smo-online-server"]
