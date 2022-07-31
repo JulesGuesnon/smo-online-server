@@ -87,7 +87,8 @@ jobs:
           esac
           cp target/${{ matrix.target }}/release/smo_server $stage/
           cd $stage
-          RELEASE_VERSION=${GITHUB_REF#refs/tags/}
+          # RELEASE_VERSION=${GITHUB_REF#refs/tags/}
+          RELEASE_VERSION=test
           ASSET_NAME="smo_server-$RELEASE_VERSION-${{ matrix.target }}.tar.gz"
           ASSET_PATH="$src/$ASSET_NAME"
           CHECKSUM_PATH="$ASSET_PATH.sha256"
