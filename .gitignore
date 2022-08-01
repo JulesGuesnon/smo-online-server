@@ -1,5 +1,6 @@
-/target
+target
 settings.json
 setting.json
 moons.json
 moon.json
+fly.toml
