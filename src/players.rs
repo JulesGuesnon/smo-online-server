@@ -1,4 +1,4 @@
-use crate::packet::Packet;
+use crate::packet::{Content, Packet};
 use chrono::Duration;
 use futures::future::join_all;
 use std::{
@@ -17,6 +17,7 @@ pub struct Costume {
     pub cap: String,
 }
 
+#[derive(Debug)]
 pub struct Player {
     pub id: Uuid,
     pub costume: Option<Costume>,
@@ -61,6 +62,19 @@ impl Player {
         } else {
             MARIO_SIZE
         }
+    }
+
+    pub fn get_stage(&self) -> Option<String> {
+        self.last_game_packet
+            .as_ref()
+            .and_then(|packet| match &packet.content {
+                Content::Game {
+                    is_2d: _,
+                    scenario: _,
+                    stage,
+                } => Some(stage.clone()),
+                _ => None,
+            })
     }
 }
 

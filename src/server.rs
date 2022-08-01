@@ -66,7 +66,7 @@ impl Server {
                 .iter()
                 .filter(|(_, p)| p.connected && p.id != packet.id)
                 .map(|(_, peer)| async {
-                    let packet = match self.players.get(&packet.id).await {
+                    let packet = match self.players.get(&peer.id).await {
                         Some(p) => (map)(p, packet.clone()).await,
                         None => Some(packet.clone()),
                     };
@@ -432,7 +432,12 @@ impl Server {
                         act,
                         subact,
                     } if self.settings.read().await.flip_in(&packet.id) => {
-                        let size = player.read().await.size();
+                        let player = player.read().await;
+
+                        let size = player.size();
+                        let sender_stage = player.get_stage();
+
+                        drop(player);
 
                         tokio::spawn({
                             let server = self.clone();
@@ -450,17 +455,39 @@ impl Server {
                                 * Quat::from_mat4(&Mat4::from_rotation_y(std::f32::consts::PI));
 
                             async move {
+                                let packet = Packet::new(
+                                    id,
+                                    Content::Player {
+                                        position,
+                                        quaternion,
+                                        animation_blend_weights,
+                                        act,
+                                        subact,
+                                    },
+                                );
+
                                 server
-                                    .broadcast(Packet::new(
-                                        id,
-                                        Content::Player {
-                                            position,
-                                            quaternion,
-                                            animation_blend_weights,
-                                            act,
-                                            subact,
-                                        },
-                                    ))
+                                    .broadcast_map(packet.clone(), |player, packet| {
+                                        let sender_stage = sender_stage.clone();
+
+                                        async move {
+                                            let player = player.read().await;
+
+                                            let receiver_stage = player.get_stage();
+
+                                            drop(player);
+
+                                            match (sender_stage.clone(), receiver_stage) {
+                                                (Some(sender), Some(receiver))
+                                                    if sender == receiver =>
+                                                {
+                                                    Some(packet)
+                                                }
+
+                                                _ => None,
+                                            }
+                                        }
+                                    })
                                     .await;
                             }
                         });
@@ -474,6 +501,10 @@ impl Server {
                         act: _,
                         subact: _,
                     } if self.settings.read().await.flip_not_in(&packet.id) => {
+                        let player = player.read().await;
+                        let sender_stage = player.get_stage();
+                        drop(player);
+
                         tokio::spawn({
                             let server = self.clone();
 
@@ -481,30 +512,19 @@ impl Server {
 
                             async move {
                                 server
-                                    .broadcast_map(packet, |player, packet| async move {
-                                        let packet = match packet.content {
-                                            Content::Player {
-                                                position,
-                                                quaternion,
-                                                animation_blend_weights,
-                                                act,
-                                                subact,
-                                            } => {
-                                                let player = player.read().await;
-                                                let size = player.size();
-                                                drop(player);
+                                    .broadcast_map(packet, |player, packet| {
+                                        let sender_stage = sender_stage.clone();
 
-                                                let position = position + Vec3::Y * size;
-                                                let quaternion = quaternion
-                                                    * Quat::from_mat4(&Mat4::from_rotation_x(
-                                                        std::f32::consts::PI,
-                                                    ))
-                                                    * Quat::from_mat4(&Mat4::from_rotation_y(
-                                                        std::f32::consts::PI,
-                                                    ));
+                                        async move {
+                                            let player = player.read().await;
+                                            let receiver_stage = player.get_stage();
+                                            let size = player.size();
+                                            drop(player);
 
-                                                Packet::new(
-                                                    id,
+                                            match (sender_stage, receiver_stage, packet.content) {
+                                                (
+                                                    Some(sender),
+                                                    Some(receiver),
                                                     Content::Player {
                                                         position,
                                                         quaternion,
@@ -512,12 +532,72 @@ impl Server {
                                                         act,
                                                         subact,
                                                     },
-                                                )
-                                            }
-                                            _ => packet,
-                                        };
+                                                ) if sender == receiver => {
+                                                    let position = position + Vec3::Y * size;
+                                                    let quaternion = quaternion
+                                                        * Quat::from_mat4(&Mat4::from_rotation_x(
+                                                            std::f32::consts::PI,
+                                                        ))
+                                                        * Quat::from_mat4(&Mat4::from_rotation_y(
+                                                            std::f32::consts::PI,
+                                                        ));
 
-                                        Some(packet)
+                                                    Some(Packet::new(
+                                                        id,
+                                                        Content::Player {
+                                                            position,
+                                                            quaternion,
+                                                            animation_blend_weights,
+                                                            act,
+                                                            subact,
+                                                        },
+                                                    ))
+                                                }
+                                                _ => None,
+                                            }
+                                        }
+                                    })
+                                    .await
+                            }
+                        });
+
+                        false
+                    }
+                    Content::Player {
+                        position: _,
+                        quaternion: _,
+                        animation_blend_weights: _,
+                        act: _,
+                        subact: _,
+                    } => {
+                        let player = player.read().await;
+                        let sender_stage = player.get_stage();
+                        drop(player);
+
+                        tokio::spawn({
+                            let server = self.clone();
+
+                            let packet = packet.clone();
+
+                            async move {
+                                server
+                                    .broadcast_map(packet, |player, packet| {
+                                        let sender_stage = sender_stage.clone();
+
+                                        async move {
+                                            let player = player.read().await;
+                                            let receiver_stage = player.get_stage();
+                                            drop(player);
+
+                                            match (sender_stage, receiver_stage) {
+                                                (Some(sender), Some(receiver))
+                                                    if sender == receiver =>
+                                                {
+                                                    Some(packet)
+                                                }
+                                                _ => None,
+                                            }
+                                        }
                                     })
                                     .await
                             }
