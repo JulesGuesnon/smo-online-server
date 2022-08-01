@@ -33,7 +33,7 @@ If you want to run commands, you'll need to attach the container to your termina
 2. `docker attach <id>` and voilà (replace `<id>` not only `id`)! Type `help` or `press enter` to show the help.
 3. :warning: If you `ctrl+c` to exit the console, **you'll stop the server**. To exit the console without stopping the server, do: `ctrl+pq`
 
-### Server commands
+## Server commands
 
 When the server is launched you can type `help` or `press enter` to get a list of commands that you can use to manage the server.
 
