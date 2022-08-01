@@ -60,7 +60,7 @@ cd smo-online-server
 6. Open `fly.toml` file in a text editor, and makes it look like that
 
 ```toml
-# fly.toml file generated for smo-online-server on 2022-08-01T12:54:43+02:00
+# fly.toml file generated for smo-online-server on 2022-08-01T13:22:37+02:00
 
 app = "<app-name>"
 kill_signal = "SIGINT"
@@ -68,26 +68,28 @@ kill_timeout = 5
 processes = []
 
 [build]
-image = "ghcr.io/julesguesnon/smo-online-server"
+  image = "ghcr.io/julesguesnon/smo-online-server"
 
 [env]
 
 [experimental]
-allowed_public_ports = []
-auto_rollback = true
+  allowed_public_ports = []
+  auto_rollback = true
 
 [[services]]
-http_checks = []
-internal_port = 1027
-processes = ["app"]
-protocol = "tcp"
-script_checks = []
+  http_checks = []
+  internal_port = 1027
+  processes = ["app"]
+  protocol = "tcp"
+  script_checks = []
+  [services.concurrency]
+    hard_limit = 25
+    soft_limit = 20
+    type = "connections"
 
-[services.concurrency]
-hard_limit = 25
-soft_limit = 20
-type = "connections"
-
+  [[services.ports]]
+    handlers = []
+    port = 1027
 
 ```
 
