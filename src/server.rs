@@ -161,7 +161,7 @@ impl Server {
 
                     id = connect_packet.id;
                     peers.insert(connect_packet.id, peer);
-                    debug!("[{}] {} reconnected", player.name, id);
+                    info!("[{}] {} reconnected", player.name, id);
                 }
                 // Player doesn't exist so we create it
                 (
@@ -172,7 +172,7 @@ impl Server {
                     },
                     None,
                 ) => {
-                    debug!("{} with id {} joining", client, connect_packet.id);
+                    info!("{} with id {} joining", client, connect_packet.id);
                     peer.id = connect_packet.id;
                     id = connect_packet.id;
 
