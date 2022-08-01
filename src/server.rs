@@ -66,7 +66,7 @@ impl Server {
                 .iter()
                 .filter(|(_, p)| p.connected && p.id != packet.id)
                 .map(|(_, peer)| async {
-                    let packet = match self.players.get(&packet.id).await {
+                    let packet = match self.players.get(&peer.id).await {
                         Some(p) => (map)(p, packet.clone()).await,
                         None => Some(packet.clone()),
                     };
