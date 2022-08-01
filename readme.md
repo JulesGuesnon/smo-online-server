@@ -6,7 +6,7 @@ This server is made for the mod [SMO online](https://github.com/CraftyBoss/Super
 
 ## Run a server
 
-There's mutliple way to run a server.
+There's mutliple ways to run a server
 
 ### Download an exe
 
@@ -21,7 +21,7 @@ If you just want to run a temporary container you can copy/paste the following c
 docker run --rm -it -v "$PWD/settings.json":/settings.json -p 0.0.0.0:1027:1027 ghcr.io/julesguesnon/smo-online-server
 ```
 
-If you want to run a container in the background run the following command. Note the **`-it`** flag that it **required** to make it works.
+If you want to run a container in the background run the following command. Note the **`-it`** flag that is **required** to make it works
 
 ```bash
 docker run -d -it -v "$PWD/settings.json":/settings.json -p 0.0.0.0:1027:1027 ghcr.io/julesguesnon/smo-online-server
