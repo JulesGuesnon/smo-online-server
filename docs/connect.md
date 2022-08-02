@@ -1,6 +1,6 @@
 # How to allow everyone to connect to the server?
 
-When you'll run the server on your computer, only people on the same network will be able to connect to the server. To allow everyone to play, we have to find a way to expose the server to whole internet.
+When you'll run the server on your computer, only people on the same network will be able to connect to the server. To allow everyone to play, we have to find a way to expose the server to the whole internet.
 I won't make a tutorial for everything, I'll only put some keywords that you can google (or search on youtube) to find your answer.
 
 ## Open a port on your box
@@ -20,12 +20,12 @@ Keywords:
 
 - setup vps
 - create vps
-- setup openvps on vps
+- setup openvpn on vps
 - install openvpn on vps
 
 ## Use a cloud provider
 
-This is probably the best way to deploy the server, and moreover for free. There's a lot of providers that allow to deploy application, and they often have free tiers.
+This is probably the best way to deploy the server, and moreover for free. There's a lot of providers that allow to deploy applications, and they often have free tiers.
 
 ### Deploy with Fly.io
 
@@ -93,7 +93,7 @@ processes = []
 
 ```
 
-7. Deploy the app by running `flyctl deploy` (it'll take some time to build)
+7. Deploy the app by running `flyctl deploy`
 
 8. Now go to your [apps](https://fly.io/apps/)
 
