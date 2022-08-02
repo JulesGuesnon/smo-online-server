@@ -4,6 +4,21 @@
 
 This server is made for the mod [SMO online](https://github.com/CraftyBoss/SuperMarioOdysseyOnline/), and aims to reproduce the behavior of the [official implementation](https://github.com/Sanae6/SmoOnlineServer). I mainly did it because I like rust, I like SMO, so both togethers are fun.
 
+## What's the difference with the official server ?
+
+### Features
+
+For now, the main difference is that this server doesn't implement a Discord bot, and I don't know if it will.
+
+### Performances
+
+:warning: I made a test with a modded Switch and Yuzu to have 2 players, both servers were running on my computer: a Mac M1 Pro, and on local network. **So the following numbers are here to give an idea but aren't representative of all cases.**
+
+| Server   | RAM (average) | Cpu % (average) |
+| -------- | ------------- | --------------- |
+| Official | 47mo          | 9%              |
+| This one | 3.7mo         | 0.7%            |
+
 ## Run a server
 
 There's mutliple ways to run a server
