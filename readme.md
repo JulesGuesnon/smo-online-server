@@ -54,7 +54,7 @@ When the server is launched you can type `help` or `press enter` to get a list o
 
 ### How to allow everyone to connect to the server?
 
-If you don't know how to make everyone connect to your server, follow [this guide](./docs/connect.md), there's also instrutions to deploy to [fly.io](https://fly.io)
+If you don't know how to make everyone connect to your server, follow [this guide](./docs/connect.md), there's also instructions to deploy to [fly.io](https://fly.io)
 
 ## Credits
 
