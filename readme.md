@@ -12,7 +12,7 @@ For now, the main difference is that this server doesn't implement a Discord bot
 
 ### Performances
 
-:warning: I made a test with a modded Switch and Yuzu to have 2 players, both servers were running on my computer: a Mac M1 Pro, and on local network. **So the following numbers are here to give an idea but aren't representative of all cases.**
+:warning: I made a test with a modded Switch and Yuzu to have 2 players moving at the same time, both servers were running on my computer: a Mac M1 Pro, and on local network. **So the following numbers are here to give an idea but aren't representative of all cases.**
 
 | Server   | RAM (average) | Cpu % (average) |
 | -------- | ------------- | --------------- |
