@@ -59,8 +59,9 @@ async fn main() -> io::Result<()> {
 
     info!("Server ready and listening on {}", bind_address);
     info!(
-        "Write {} and press enter to get the list of the available commands",
-        "help".cyan()
+        "Write {} or {} to get the list of the available commands",
+        "help".cyan(),
+        "press enter".cyan(),
     );
 
     loop {

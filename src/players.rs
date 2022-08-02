@@ -1,4 +1,4 @@
-use crate::packet::Packet;
+use crate::packet::{Content, Packet};
 use chrono::Duration;
 use futures::future::join_all;
 use std::{
@@ -17,6 +17,7 @@ pub struct Costume {
     pub cap: String,
 }
 
+#[derive(Debug)]
 pub struct Player {
     pub id: Uuid,
     pub costume: Option<Costume>,
@@ -26,10 +27,30 @@ pub struct Player {
     pub is_speedrun: bool,
     pub is_seeking: bool,
     pub last_game_packet: Option<Packet>,
+    pub last_position: Option<Content>,
     // id, is_grand
     pub shine_sync: HashSet<(i32, bool)>,
     pub loaded_save: bool,
     pub time: Duration,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            id: Default::default(),
+            costume: Default::default(),
+            name: Default::default(),
+            scenario: Default::default(),
+            is_2d: Default::default(),
+            is_speedrun: Default::default(),
+            is_seeking: Default::default(),
+            last_game_packet: Default::default(),
+            last_position: Default::default(),
+            shine_sync: Default::default(),
+            loaded_save: Default::default(),
+            time: Duration::seconds(0),
+        }
+    }
 }
 
 impl Player {
@@ -43,6 +64,7 @@ impl Player {
             is_speedrun: false,
             is_seeking: false,
             last_game_packet: None,
+            last_position: None,
             shine_sync: HashSet::new(),
             loaded_save: false,
             time: Duration::zero(),
@@ -61,6 +83,19 @@ impl Player {
         } else {
             MARIO_SIZE
         }
+    }
+
+    pub fn get_stage(&self) -> Option<String> {
+        self.last_game_packet
+            .as_ref()
+            .and_then(|packet| match &packet.content {
+                Content::Game {
+                    is_2d: _,
+                    scenario: _,
+                    stage,
+                } => Some(stage.clone()),
+                _ => None,
+            })
     }
 }
 
@@ -84,11 +119,11 @@ impl Players {
         players.get(id).map(|p| p.clone())
     }
 
-    // pub async fn all(&self) -> Vec<SharedPlayer> {
-    //     let players = self.players.read().await;
+    pub async fn all(&self) -> Vec<SharedPlayer> {
+        let players = self.players.read().await;
 
-    //     players.values().map(|p| p.clone()).collect()
-    // }
+        players.values().map(|p| p.clone()).collect()
+    }
 
     pub async fn all_from_ids(&self, ids: Vec<Uuid>) -> Vec<SharedPlayer> {
         let players = self.players.read().await;

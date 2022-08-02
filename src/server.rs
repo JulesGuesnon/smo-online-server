@@ -176,9 +176,10 @@ impl Server {
                     peer.id = connect_packet.id;
                     id = connect_packet.id;
 
-                    let player = Player::new(connect_packet.id, client);
-
-                    let _ = self.players.add(player).await;
+                    let _ = self
+                        .players
+                        .add(Player::new(connect_packet.id, client))
+                        .await;
 
                     let peer = self.on_new_peer(peer).await?;
 
@@ -290,16 +291,16 @@ impl Server {
                     Content::Game {
                         is_2d,
                         scenario,
-                        stage,
+                        stage: self_stage,
                     } => {
                         let mut player = player.write().await;
-                        info!("{}: {}->{}", player.name, stage, scenario);
+                        info!("{}: {}->{}", player.name, self_stage, scenario);
 
                         player.scenario = Some(*scenario);
                         player.is_2d = *is_2d;
                         player.last_game_packet = Some(packet.clone());
 
-                        if stage == "CapWorldHomeStage" && *scenario == 0 {
+                        if self_stage == "CapWorldHomeStage" && *scenario == 0 {
                             player.is_speedrun = true;
                             player.shine_sync.clear();
                             let mut shine_bag = self.shine_bag.write().await;
@@ -315,7 +316,7 @@ impl Server {
                             });
 
                             info!("Entered Cap on new save, preventing moon sync until Cascade");
-                        } else if stage == "WaterfallWorldHomeStage" {
+                        } else if self_stage == "WaterfallWorldHomeStage" {
                             let was_speedrun = player.is_speedrun;
                             player.is_speedrun = false;
 
@@ -335,7 +336,10 @@ impl Server {
                             }
                         }
 
-                        if self.settings.read().await.scenario.merge_enabled {
+                        drop(player);
+
+                        let should_broadcast = if self.settings.read().await.scenario.merge_enabled
+                        {
                             tokio::spawn({
                                 let server = self.clone();
                                 let packet = packet.clone();
@@ -373,7 +377,50 @@ impl Server {
                             false
                         } else {
                             true
+                        };
+
+                        // Send the position of all players when a player join a stage
+                        // If we don't do so, people are gonna be invisible or to their previous position until they move
+                        let peers = self.peers.read().await;
+                        let peer = peers.get(&id);
+
+                        if let Some(peer) = peer {
+                            let players = self.players.all().await;
+
+                            let positions = join_all(players.iter().map(|p| async move {
+                                let player = p.read().await;
+
+                                (
+                                    player.get_stage(),
+                                    player.id.clone(),
+                                    player.last_position.clone(),
+                                )
+                            }))
+                            .await;
+
+                            for (stage, id, position) in positions {
+                                match (stage, &position) {
+                                    (
+                                        Some(player_stage),
+                                        Some(Content::Player {
+                                            position: _,
+                                            quaternion: _,
+                                            animation_blend_weights: _,
+                                            act: _,
+                                            subact: _,
+                                        }),
+                                    ) if &player_stage == self_stage => {
+                                        peer.send(Packet::new(id, position.unwrap())).await
+                                    }
+                                    _ => (),
+                                }
+                            }
                         }
+
+                        drop(peer);
+                        drop(peers);
+
+                        should_broadcast
                     }
                     Content::Tag {
                         update_type,
@@ -426,19 +473,24 @@ impl Server {
                         true
                     }
                     Content::Player {
-                        position,
+                        position: game_pos,
                         quaternion,
                         animation_blend_weights,
                         act,
                         subact,
                     } if self.settings.read().await.flip_in(&packet.id) => {
-                        let size = player.read().await.size();
+                        let mut player = player.write().await;
+                        player.last_position = Some(packet.content.clone());
+                        let size = player.size();
+                        let sender_stage = player.get_stage();
+
+                        drop(player);
 
                         tokio::spawn({
                             let server = self.clone();
 
                             let id = packet.id.clone();
-                            let position = position.clone();
+                            let position = game_pos.clone();
                             let quaternion = quaternion.clone();
                             let animation_blend_weights = animation_blend_weights.clone();
                             let act = act.clone();
@@ -450,17 +502,39 @@ impl Server {
                                 * Quat::from_mat4(&Mat4::from_rotation_y(std::f32::consts::PI));
 
                             async move {
+                                let packet = Packet::new(
+                                    id,
+                                    Content::Player {
+                                        position,
+                                        quaternion,
+                                        animation_blend_weights,
+                                        act,
+                                        subact,
+                                    },
+                                );
+
                                 server
-                                    .broadcast(Packet::new(
-                                        id,
-                                        Content::Player {
-                                            position,
-                                            quaternion,
-                                            animation_blend_weights,
-                                            act,
-                                            subact,
-                                        },
-                                    ))
+                                    .broadcast_map(packet.clone(), |player, packet| {
+                                        let sender_stage = sender_stage.clone();
+
+                                        async move {
+                                            let player = player.read().await;
+
+                                            let receiver_stage = player.get_stage();
+
+                                            drop(player);
+
+                                            match (sender_stage.clone(), receiver_stage) {
+                                                (Some(sender), Some(receiver))
+                                                    if sender == receiver =>
+                                                {
+                                                    Some(packet)
+                                                }
+
+                                                _ => None,
+                                            }
+                                        }
+                                    })
                                     .await;
                             }
                         });
@@ -474,6 +548,11 @@ impl Server {
                         act: _,
                         subact: _,
                     } if self.settings.read().await.flip_not_in(&packet.id) => {
+                        let mut player = player.write().await;
+                        player.last_position = Some(packet.content.clone());
+                        let sender_stage = player.get_stage();
+                        drop(player);
+
                         tokio::spawn({
                             let server = self.clone();
 
@@ -481,30 +560,19 @@ impl Server {
 
                             async move {
                                 server
-                                    .broadcast_map(packet, |player, packet| async move {
-                                        let packet = match packet.content {
-                                            Content::Player {
-                                                position,
-                                                quaternion,
-                                                animation_blend_weights,
-                                                act,
-                                                subact,
-                                            } => {
-                                                let player = player.read().await;
-                                                let size = player.size();
-                                                drop(player);
+                                    .broadcast_map(packet, |player, packet| {
+                                        let sender_stage = sender_stage.clone();
 
-                                                let position = position + Vec3::Y * size;
-                                                let quaternion = quaternion
-                                                    * Quat::from_mat4(&Mat4::from_rotation_x(
-                                                        std::f32::consts::PI,
-                                                    ))
-                                                    * Quat::from_mat4(&Mat4::from_rotation_y(
-                                                        std::f32::consts::PI,
-                                                    ));
+                                        async move {
+                                            let player = player.read().await;
+                                            let receiver_stage = player.get_stage();
+                                            let size = player.size();
+                                            drop(player);
 
-                                                Packet::new(
-                                                    id,
+                                            match (sender_stage, receiver_stage, packet.content) {
+                                                (
+                                                    Some(sender),
+                                                    Some(receiver),
                                                     Content::Player {
                                                         position,
                                                         quaternion,
@@ -512,12 +580,73 @@ impl Server {
                                                         act,
                                                         subact,
                                                     },
-                                                )
-                                            }
-                                            _ => packet,
-                                        };
+                                                ) if sender == receiver => {
+                                                    let position = position + Vec3::Y * size;
+                                                    let quaternion = quaternion
+                                                        * Quat::from_mat4(&Mat4::from_rotation_x(
+                                                            std::f32::consts::PI,
+                                                        ))
+                                                        * Quat::from_mat4(&Mat4::from_rotation_y(
+                                                            std::f32::consts::PI,
+                                                        ));
 
-                                        Some(packet)
+                                                    Some(Packet::new(
+                                                        id,
+                                                        Content::Player {
+                                                            position,
+                                                            quaternion,
+                                                            animation_blend_weights,
+                                                            act,
+                                                            subact,
+                                                        },
+                                                    ))
+                                                }
+                                                _ => None,
+                                            }
+                                        }
+                                    })
+                                    .await
+                            }
+                        });
+
+                        false
+                    }
+                    Content::Player {
+                        position: _,
+                        quaternion: _,
+                        animation_blend_weights: _,
+                        act: _,
+                        subact: _,
+                    } => {
+                        let mut player = player.write().await;
+                        player.last_position = Some(packet.content.clone());
+                        let sender_stage = player.get_stage();
+                        drop(player);
+
+                        tokio::spawn({
+                            let server = self.clone();
+
+                            let packet = packet.clone();
+
+                            async move {
+                                server
+                                    .broadcast_map(packet, |player, packet| {
+                                        let sender_stage = sender_stage.clone();
+
+                                        async move {
+                                            let player = player.read().await;
+                                            let receiver_stage = player.get_stage();
+                                            drop(player);
+
+                                            match (sender_stage, receiver_stage) {
+                                                (Some(sender), Some(receiver))
+                                                    if sender == receiver =>
+                                                {
+                                                    Some(packet)
+                                                }
+                                                _ => None,
+                                            }
+                                        }
                                     })
                                     .await
                             }
