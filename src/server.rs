@@ -379,6 +379,8 @@ impl Server {
                             true
                         };
 
+                        // Send the position of all players when a player join a stage
+                        // If we don't do so, people are gonna be invisible or to their previous position until they move
                         let peers = self.peers.read().await;
                         let peer = peers.get(&id);
 
