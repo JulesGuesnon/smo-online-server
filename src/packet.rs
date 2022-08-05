@@ -198,6 +198,26 @@ impl Content {
 
     fn serialize(&self) -> (Bytes, Bytes) {
         let mut body = BytesMut::with_capacity(64);
+        match &self {
+            Self::Player {
+                position: _,
+                quaternion: _,
+                animation_blend_weights: _,
+                act: _,
+                subact: _,
+            } => (),
+
+            Self::Cap {
+                position: _,
+                quaternion: _,
+                cap_out: _,
+                cap_anim: _,
+            } => (),
+
+            _ => {
+                tracing::trace!(packet = ?self, "outgoing");
+            }
+        }
 
         let id = match self {
             Self::Unknown => 0i16,
@@ -382,6 +402,27 @@ impl Content {
             },
             _ => Self::Unknown,
         };
+
+        match &packet {
+            Self::Player {
+                position: _,
+                quaternion: _,
+                animation_blend_weights: _,
+                act: _,
+                subact: _,
+            } => (),
+
+            Self::Cap {
+                position: _,
+                quaternion: _,
+                cap_out: _,
+                cap_anim: _,
+            } => (),
+
+            _ => {
+                tracing::trace!(?packet, "incoming");
+            }
+        }
 
         Ok(packet)
     }
