@@ -8,8 +8,8 @@ use color_eyre::Result;
 use futures::future::join_all;
 use futures::Future;
 use glam::{Mat4, Quat, Vec3};
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf};
+use tokio::fs::OpenOptions;
+use tokio::io::{split, AsyncReadExt, ReadHalf};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -768,11 +768,12 @@ impl Server {
 
         let serialized = serde_json::to_string(&shines).unwrap();
 
-        let mut file = File::open(file_name)
+        let _ = tokio::fs::write(file_name, serialized)
             .await
-            .expect("Shine file can't be opened");
-
-        let _ = file.write_all(serialized.as_bytes()).await;
+            .map_err(|err| {
+                tracing::error!(%err, "Shine file failed to save");
+                err
+            });
     }
 
     pub async fn sync_shine_bag(&self) {
