@@ -468,6 +468,7 @@ impl Server {
                     } if self.settings.read().await.flip_in(&packet.id) => {
                         let mut player = player.write().await;
                         player.last_position = Some(packet.content.clone());
+                        player.loaded_save = true;
                         let size = player.size();
                         let sender_stage = player.get_stage();
 
@@ -537,6 +538,7 @@ impl Server {
                     } if self.settings.read().await.flip_not_in(&packet.id) => {
                         let mut player = player.write().await;
                         player.last_position = Some(packet.content.clone());
+                        player.loaded_save = true;
                         let sender_stage = player.get_stage();
                         drop(player);
 
@@ -607,6 +609,7 @@ impl Server {
                     } => {
                         let mut player = player.write().await;
                         player.last_position = Some(packet.content.clone());
+                        player.loaded_save = true;
                         let sender_stage = player.get_stage();
                         drop(player);
 
