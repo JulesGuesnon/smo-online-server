@@ -102,7 +102,7 @@ impl Server {
 
         let run = || async {
             let ip = socket.peer_addr()?.ip();
-            debug!("New connection from: {}", ip);
+            debug!(%ip, "Accepted incoming connection");
 
             let (mut reader, writer) = split(socket);
 
@@ -133,7 +133,7 @@ impl Server {
                 .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
 
             if connected_peers == self.settings.read().await.server.max_players {
-                info!("Player {} couldn't join server is full", connect_packet.id);
+                info!("Player {} couldn't join: server is full", connect_packet.id);
                 return Err(eyre!("Server full"));
             }
 
@@ -320,9 +320,7 @@ impl Server {
                                 tokio::spawn({
                                     let server = self.clone();
                                     async move {
-                                        info!(
-                                    "Entered Cascade with moon sync disabled, enabling moon sync"
-                                );
+                                        info!("Entered Cascade with moon sync disabled, enabling moon sync");
                                         sleep(std::time::Duration::from_secs(15)).await;
                                         let _ = server.sync_player_shine_bag(id).await;
                                     }
