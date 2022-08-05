@@ -50,6 +50,21 @@ pub struct Flip {
     pub pov: FlipPov,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct SpecialCostumes {
+    pub costumes: Vec<String>,
+    pub allowed_players: Vec<Uuid>,
+}
+
+impl Default for SpecialCostumes {
+    fn default() -> Self {
+        Self {
+            costumes: vec!["MarioInvisible".to_owned()],
+            allowed_players: Default::default(),
+        }
+    }
+}
+
 #[derive(Default, Deserialize, Serialize)]
 pub struct BanList {
     pub enabled: bool,
@@ -115,6 +130,7 @@ pub struct Settings {
     pub scenario: Scenario,
     pub persist_shines: PersistShines,
     pub flip: Flip,
+    pub special_costumes: SpecialCostumes,
 }
 
 impl Settings {
@@ -171,5 +187,13 @@ impl Settings {
         self.flip.enabled
             && (self.flip.pov == FlipPov::Both || self.flip.pov == FlipPov::Self_)
             && !self.flip.players.contains(id)
+    }
+
+    pub fn is_special_costume(&self, costume: &String) -> bool {
+        self.special_costumes.costumes.contains(costume)
+    }
+
+    pub fn special_costume_allowed(&self, id: &Uuid) -> bool {
+        self.special_costumes.allowed_players.contains(id)
     }
 }

@@ -280,7 +280,34 @@ impl Server {
                             }
                         });
 
-                        true
+                        let settings = self.settings.read().await;
+
+                        let is_allowed_special = settings.special_costume_allowed(&player.id);
+                        let is_cap_special = settings.is_special_costume(cap);
+                        let is_body_special = settings.is_special_costume(body);
+
+                        drop(settings);
+                        let fallback = "Mario".to_owned();
+
+                        let cap = match (is_cap_special, is_allowed_special) {
+                            (true, false) => fallback.clone(),
+                            _ => cap.clone(),
+                        };
+
+                        let body = match (is_body_special, is_allowed_special) {
+                            (true, false) => fallback,
+                            _ => body.clone(),
+                        };
+
+                        let outgoing = Packet {
+                            id: packet.id,
+                            content: Content::Costume { body, cap },
+                        };
+
+                        tracing::trace!(?outgoing);
+                        self.broadcast(outgoing).await;
+
+                        false
                     }
                     Content::Game {
                         is_2d,
