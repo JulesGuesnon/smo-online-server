@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
         0 | 1 | 2 => format!("{}=debug", pkg_name),
 
         #[cfg(not(debug_assertions))]
-        0 => format!("{}=info,{}=info", pkg_name),
+        0 => format!("{}=info", pkg_name),
         #[cfg(not(debug_assertions))]
         1 | 2 => format!("{}=debug", pkg_name),
 
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
         async move { commands::listen(server).await }
     });
 
-    info!("Server ready and listening on {}", bind_address);
+    info!(addr = %bind_address, "Server ready and listening");
     info!(
         "Write {} or {} to get the list of the available commands",
         "help".cyan(),
@@ -160,7 +160,9 @@ async fn main() -> Result<()> {
             match socket.set_nodelay(true) {
                 Ok(_) => match server.handle_connection(socket).await {
                     Ok(_) => (),
-                    Err(message) => info!("handle_connection exited with error: {}", message),
+                    Err(message) => {
+                        debug!(error = %message, "handle_connection exited with error")
+                    }
                 },
                 Err(_) => {
                     debug!("Couldn't set NODELAY to socket, dropping it");
