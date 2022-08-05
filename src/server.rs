@@ -303,7 +303,6 @@ impl Server {
                             content: Content::Costume { body, cap },
                         };
 
-                        tracing::trace!(?outgoing);
                         self.broadcast(outgoing).await;
 
                         false

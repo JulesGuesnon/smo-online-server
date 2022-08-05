@@ -214,7 +214,7 @@ impl Content {
             } => (),
 
             _ => {
-                tracing::trace!(packet = ?self, "outgoing");
+                tracing::trace!(outgoing = ?self);
             }
         }
 
@@ -417,7 +417,7 @@ impl Content {
             } => (),
 
             _ => {
-                tracing::trace!(?packet, "incoming");
+                tracing::trace!(incoming = ?packet);
             }
         }
 
