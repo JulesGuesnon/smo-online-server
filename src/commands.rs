@@ -1053,13 +1053,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
         Command::Shine {
             subcmd: ShineSubCmd::Send { id, players },
         } => {
-            let packet = Packet::new(
-                Uuid::nil(),
-                Content::Shine {
-                    id,
-                    is_grand: false,
-                },
-            );
+            let packet = Packet::new(Uuid::nil(), Content::Shine { id });
 
             if players.is_wildcard() {
                 server.broadcast(packet).await

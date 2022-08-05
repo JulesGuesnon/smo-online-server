@@ -165,7 +165,6 @@ pub enum Content {
     },
     Shine {
         id: i32,
-        is_grand: bool,
     },
     Capture {
         model: String,
@@ -300,9 +299,8 @@ impl Content {
                 Self::serialize_string(cap.clone(), COSTUME_SIZE, &mut body);
                 8
             }
-            Self::Shine { id, is_grand } => {
-                body.put_i32(*id);
-                body.put_u8(is_grand.as_byte());
+            Self::Shine { id } => {
+                body.put_i32_le(*id);
                 9
             }
             Self::Capture { model } => {
@@ -385,7 +383,6 @@ impl Content {
             },
             9 => Self::Shine {
                 id: body.slice(..4).get_i32_le(),
-                is_grand: body.slice(4..5).get_u8().as_bool(),
             },
             10 => Self::Capture {
                 model: Self::deserialize_string(body.slice(0..COSTUME_SIZE))?,
