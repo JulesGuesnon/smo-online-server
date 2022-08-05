@@ -27,6 +27,7 @@ impl FlipPov {
         }
     }
 
+    #[inline]
     pub fn to_str(&self) -> &'static str {
         match self {
             Self::Both => "both",
@@ -37,6 +38,7 @@ impl FlipPov {
 }
 
 impl Default for FlipPov {
+    #[inline(always)]
     fn default() -> Self {
         Self::Both
     }

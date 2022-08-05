@@ -63,6 +63,7 @@ trait AsBool {
 }
 
 impl AsByte for bool {
+    #[inline(always)]
     fn as_byte(&self) -> u8 {
         if *self {
             1
@@ -73,6 +74,7 @@ impl AsByte for bool {
 }
 
 impl AsBool for u8 {
+    #[inline(always)]
     fn as_bool(&self) -> bool {
         *self == 1
     }
@@ -111,6 +113,7 @@ impl ConnectionType {
         }
     }
 
+    #[inline]
     fn as_u32(&self) -> u32 {
         match self {
             Self::First => 1,
@@ -383,6 +386,7 @@ impl Content {
         Ok(packet)
     }
 
+    #[inline]
     pub fn is_connect(&self) -> bool {
         matches!(
             self,
@@ -394,6 +398,7 @@ impl Content {
         )
     }
 
+    #[inline]
     pub fn is_disconnect(&self) -> bool {
         matches!(self, Self::Disconnect)
     }
@@ -406,6 +411,7 @@ pub struct Packet {
 }
 
 impl Packet {
+    #[inline]
     pub fn new(id: Uuid, content: Content) -> Self {
         Self { id, content }
     }

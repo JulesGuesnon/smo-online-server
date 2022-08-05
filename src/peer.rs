@@ -18,6 +18,7 @@ pub struct Peer {
 // Player -> Player
 // State related stuff -> Game state: Arc<RwLock<HashMap<Uuid, RwLock<State>>>>
 impl Peer {
+    #[inline]
     pub fn new(ip: IpAddr, socket: WriteHalf<TcpStream>) -> Self {
         Self {
             id: Uuid::nil(),

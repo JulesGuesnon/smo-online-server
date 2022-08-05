@@ -54,6 +54,7 @@ impl Default for Player {
 }
 
 impl Player {
+    #[inline]
     pub fn new(id: Uuid, name: String) -> Self {
         Self {
             id,
@@ -73,10 +74,12 @@ impl Player {
 }
 
 impl Player {
+    #[inline]
     pub fn set_costume(&mut self, body: String, cap: String) {
         self.costume = Some(Costume { body, cap });
     }
 
+    #[inline(always)]
     pub fn size(&self) -> f32 {
         if self.is_2d {
             MARIO_SIZE_2D
@@ -106,6 +109,7 @@ pub struct Players {
 }
 
 impl Players {
+    #[inline]
     pub fn new() -> Self {
         Self {
             players: RwLock::default(),
