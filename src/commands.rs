@@ -526,25 +526,6 @@ impl Command {
                 )
             },
             Self::Flip { subcmd: _ } => {
-                let list = "shine list";
-                let list_desc = format!("- {} list the ids of the collected moons", "shine list".cyan());
-
-                let clear = "shine clear";
-                let clear_desc = format!("- {} will delete all the collected moons", "shine clean".cyan());
-
-                let sync = "shine sync";
-                let sync_desc = format!("- {} will force the sync of the moons", "shine sync".cyan());
-
-                let send = "shine send <id> <username 1|*> <username 2> ...";
-                let send_desc = format!("- {} will send a moon to a player or everyone if username is *", "shine send".cyan());
-
-
-                Help::new(
-                    &format!("{}\n{}\n{}\n{}", list, clear, sync, send),
-                    &format!("{}\n{}\n{}\n{}", list_desc, clear_desc, sync_desc, send_desc)
-                )
-            },
-            Self::Shine { subcmd: _ } => {
                 let list = "flip list";
                 let list_desc = format!("- {} list the ids of the flipped players", "flip list".cyan());
 
@@ -564,6 +545,25 @@ impl Command {
                 Help::new(
                     &format!("{}\n{}\n{}\n{}\n{}", list, add, remove, set, pov),
                     &format!("{}\n{}\n{}\n{}\n{}", list_desc, add_desc, remove_desc, set_desc, pov_desc)
+                )
+            },
+            Self::Shine { subcmd: _ } => {
+                let list = "shine list";
+                let list_desc = format!("- {} list the ids of the collected moons", "shine list".cyan());
+
+                let clear = "shine clear";
+                let clear_desc = format!("- {} will delete all the collected moons", "shine clean".cyan());
+
+                let sync = "shine sync";
+                let sync_desc = format!("- {} will force the sync of the moons", "shine sync".cyan());
+
+                let send = "shine send <id> <username 1|*> <username 2> ...";
+                let send_desc = format!("- {} will send a moon to a player or everyone if username is *", "shine send".cyan());
+
+
+                Help::new(
+                    &format!("{}\n{}\n{}\n{}", list, clear, sync, send),
+                    &format!("{}\n{}\n{}\n{}", list_desc, clear_desc, sync_desc, send_desc)
                 )
             },
             Self::Stop => Help::new("stop", "Will stop the server"),
