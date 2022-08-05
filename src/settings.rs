@@ -1,9 +1,8 @@
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
-use tokio::fs::OpenOptions;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::info;
 use uuid::Uuid;
 
@@ -119,48 +118,47 @@ pub struct Settings {
 }
 
 impl Settings {
+    #[inline(always)]
+    fn path_buf() -> PathBuf {
+        PathBuf::from("./settings.json")
+    }
+
     pub async fn load() -> Self {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open("settings.json")
+        let path = Self::path_buf();
+        if !path.exists() {
+            return Self::load_default().await;
+        }
+
+        let body = tokio::fs::read(path)
             .await
-            .expect("Settings couldn't be loaded or created");
+            .expect("Failed to read settings");
 
-        let mut content = String::from("");
-        file.read_to_string(&mut content).await.unwrap();
-
-        match serde_json::from_str(&content) {
+        match serde_json::from_slice(&body) {
             Ok(v) => {
                 info!("Loaded settings.json");
                 v
             }
             Err(_) => {
                 info!("Creating file settings.json. If you want to update it, stop the server, modify the file and restart the server");
-
-                let settings = Self::default();
-
-                let serialized = serde_json::to_string_pretty(&settings).unwrap();
-
-                file.write_all(serialized.as_bytes()).await.unwrap();
-
-                settings
+                Self::load_default().await
             }
         }
     }
 
-    pub async fn save(&self) {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open("settings.json")
-            .await
-            .expect("Settings couldn't be loaded or created");
+    async fn load_default() -> Self {
+        let settings = Self::default();
+        settings.save().await;
 
+        settings
+    }
+
+    pub async fn save(&self) {
+        let path = Self::path_buf();
         let serialized = serde_json::to_string_pretty(self).unwrap();
 
-        file.write_all(serialized.as_bytes()).await.unwrap();
+        tokio::fs::write(path, serialized)
+            .await
+            .expect("Settings failed to save");
     }
 
     pub fn flip_in(&self, id: &Uuid) -> bool {
