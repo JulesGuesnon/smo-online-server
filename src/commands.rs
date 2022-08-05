@@ -5,8 +5,8 @@ use std::string::ToString;
 use std::sync::Arc;
 use std::time::Duration;
 
-use colored::Colorize;
 use futures::future::join_all;
+use owo_colors::OwoColorize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::time::sleep;
 use tracing::{error, info};

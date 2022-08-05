@@ -11,19 +11,17 @@ description = """
 A server to play Super Mario Odyssey online
 """
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
+bytes = "1.2.1"
+chrono = "0.4.20"
+color-eyre = "0.6.2"
 futures = "0.3.21"
-tracing = "0.1"
-tracing-subscriber = "0.2"
-uuid = { version = "1.1.2", features = ["v4", "serde"] }
-bytes = "1.2.0"
-anyhow = "1.0.58"
-chrono = "0.4.19"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-glam = "0.21.2"
-colored = "2.0.0"
+glam = "0.21.3"
+owo-colors = "3.4.0"
+serde = { version = "1.0.142", features = ["derive"] }
+serde_json = "1.0.83"
+tokio = { version = "1.20.1", features = ["full"] }
+tracing = "0.1.36"
+tracing-subscriber = { version = "0.3.15", features = ["env-filter", "fmt"] }
+uuid = { version = "1.1.2", features = ["serde", "v4"] }
+

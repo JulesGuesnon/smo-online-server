@@ -37,7 +37,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use colored::Colorize;
+use owo_colors::OwoColorize;
 use server::Server;
 use settings::Settings;
 use tokio::io::{self, AsyncWriteExt};

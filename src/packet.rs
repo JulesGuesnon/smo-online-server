@@ -1,8 +1,9 @@
 use std::ops::Range;
 use std::str::from_utf8;
 
-use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use color_eyre::eyre::eyre;
+use color_eyre::Result;
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
@@ -111,7 +112,7 @@ impl ConnectionType {
         match byte {
             0 => Ok(Self::First),
             1 => Ok(Self::Reconnect),
-            b => Err(anyhow::anyhow!(
+            b => Err(eyre!(
                 "Invalid byte '{}', couldn't convert it to ConnectionType",
                 b
             )),

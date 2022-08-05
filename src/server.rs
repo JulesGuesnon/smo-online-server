@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use chrono::Duration;
+use color_eyre::eyre::eyre;
+use color_eyre::Result;
 use futures::future::join_all;
 use futures::Future;
 use glam::{Mat4, Quat, Vec3};
@@ -83,7 +84,7 @@ impl Server {
 
             Ok(())
         } else {
-            Err(anyhow!("User {} not found", id))
+            Err(eyre!("User {} not found", id))
         }
     }
 
@@ -122,7 +123,7 @@ impl Server {
                     "Player {} didn't send connection packet on first connection",
                     connect_packet.id
                 );
-                return Err(anyhow!("Didn't receive connection packet as first packet"));
+                return Err(eyre!("Didn't receive connection packet as first packet"));
             }
 
             let peers = self.peers.read().await;
@@ -133,7 +134,7 @@ impl Server {
 
             if connected_peers == self.settings.read().await.server.max_players {
                 info!("Player {} couldn't join server is full", connect_packet.id);
-                return Err(anyhow!("Server full"));
+                return Err(eyre!("Server full"));
             }
 
             drop(peers);
@@ -183,7 +184,7 @@ impl Server {
                 }
                 _ => {
                     debug!("This case isn't supposed to be reach");
-                    return Err(anyhow!("This case isn't supposed to be reach"));
+                    return Err(eyre!("This case isn't supposed to be reach"));
                 }
             }
 
@@ -201,7 +202,7 @@ impl Server {
 
             let peer = peers
                 .get(&id)
-                .ok_or_else(|| anyhow!("Peer is supposed to be in the HashMap"))?;
+                .ok_or_else(|| eyre!("Peer is supposed to be in the HashMap"))?;
 
             for (uuid, other_peer) in self.peers.read().await.iter() {
                 if *uuid == id || !other_peer.connected {
@@ -256,7 +257,7 @@ impl Server {
                 } else if packet.id != id {
                     debug!("Id mismatch: received {} - expecting {}", packet.id, id);
 
-                    return Err(anyhow!(
+                    return Err(eyre!(
                         "Id mismatch: received {} - expecting {}",
                         packet.id,
                         id
@@ -705,7 +706,7 @@ impl Server {
                 peer.ip, peer.id
             );
 
-            Err(anyhow!(
+            Err(eyre!(
                 "Banned player {} with ip {} tried to joined",
                 peer.ip,
                 peer.id
@@ -726,19 +727,17 @@ impl Server {
             .players
             .get(&id)
             .await
-            .ok_or_else(|| anyhow!("Couldn't find player"))?;
+            .ok_or_else(|| eyre!("Couldn't find player"))?;
 
         let mut player = player.write().await;
 
         if player.is_speedrun {
-            return Err(anyhow!("Player is in speedrun mode"));
+            return Err(eyre!("Player is in speedrun mode"));
         }
 
         let bag = self.shine_bag.read().await;
         let peers = self.peers.read().await;
-        let peer = peers
-            .get(&id)
-            .ok_or_else(|| anyhow!("Couldn't find peer"))?;
+        let peer = peers.get(&id).ok_or_else(|| eyre!("Couldn't find peer"))?;
 
         for (shine_id, is_grand) in bag.difference(&player.shine_sync.clone()) {
             player.shine_sync.insert((*shine_id, *is_grand));
@@ -878,11 +877,11 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
         let mut body_buf = vec![0; header.packet_size];
 
         match reader.read_exact(&mut body_buf).await {
-            Ok(n) if n == 0 => return Err(anyhow!("End of file reached")),
+            Ok(n) if n == 0 => return Err(eyre!("End of file reached")),
             Ok(_) => (),
             Err(e) => {
                 debug!("Error reading header {}", e);
-                return Err(anyhow!(e));
+                return Err(eyre!(e));
             }
         };
 
