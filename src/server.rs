@@ -806,7 +806,7 @@ impl Server {
         let mut content = String::from("");
         file.read_to_string(&mut content).await?;
 
-        let deserialized = serde_json::from_str(&content).unwrap();
+        let deserialized = serde_json::from_str(&content).unwrap_or_default();
 
         let mut shines = self.shine_bag.write().await;
 
