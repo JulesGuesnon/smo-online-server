@@ -49,7 +49,7 @@ pub struct Flip {
     pub pov: FlipPov,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct BanList {
     pub enabled: bool,
     pub ids: Vec<Uuid>,
@@ -70,16 +70,6 @@ impl BanList {
     }
 }
 
-impl Default for BanList {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ids: vec![],
-            ips: vec![],
-        }
-    }
-}
-
 #[derive(Deserialize, Serialize)]
 pub struct PersistShines {
     pub enabled: bool,
@@ -95,17 +85,9 @@ impl Default for PersistShines {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Scenario {
     pub merge_enabled: bool,
-}
-
-impl Default for Scenario {
-    fn default() -> Self {
-        Self {
-            merge_enabled: false,
-        }
-    }
 }
 
 #[derive(Deserialize, Serialize)]

@@ -81,11 +81,7 @@ impl AsByte for bool {
 
 impl AsBool for u8 {
     fn as_bool(&self) -> bool {
-        if *self == 1 {
-            true
-        } else {
-            false
-        }
+        *self == 1
     }
 }
 
@@ -200,7 +196,7 @@ impl Content {
     }
 
     fn deserialize_string(bytes: Bytes) -> Result<String> {
-        Ok(from_utf8(&bytes[..])?.trim_matches('\0').to_string())
+        Ok(from_utf8(&bytes[..])?.trim_matches('\0').to_owned())
     }
 
     fn serialize(&self) -> (Bytes, Bytes) {
@@ -209,7 +205,7 @@ impl Content {
         let id = match self {
             Self::Unknown => 0i16,
             Self::Init { max_player } => {
-                body.put_i16_le(max_player.clone());
+                body.put_i16_le(*max_player);
 
                 1
             }
@@ -224,12 +220,12 @@ impl Content {
                 body.put(quaternion.as_bytes());
                 body.put(Bytes::from(
                     animation_blend_weights
-                        .into_iter()
+                        .iter()
                         .flat_map(|v| v.to_le_bytes())
                         .collect::<Vec<u8>>(),
                 ));
-                body.put_u16_le(act.clone());
-                body.put_u16_le(subact.clone());
+                body.put_u16_le(*act);
+                body.put_u16_le(*subact);
 
                 2
             }
@@ -253,7 +249,7 @@ impl Content {
                 stage,
             } => {
                 body.put_u8(is_2d.as_byte());
-                body.put_u8(scenario.clone());
+                body.put_u8(*scenario);
                 body.put(Self::serialize_string(stage.clone(), 0x40));
 
                 4
@@ -264,10 +260,10 @@ impl Content {
                 seconds,
                 minutes,
             } => {
-                body.put_u8(update_type.clone());
+                body.put_u8(*update_type);
                 body.put_u8(is_it.as_byte());
-                body.put_u16_le(seconds.clone());
-                body.put_u16_le(minutes.clone());
+                body.put_u16_le(*seconds);
+                body.put_u16_le(*minutes);
 
                 5
             }
@@ -277,7 +273,7 @@ impl Content {
                 client,
             } => {
                 body.put_u32_le(type_.as_u32());
-                body.put_u16_le(max_player.clone());
+                body.put_u16_le(*max_player);
                 body.put(Self::serialize_string(client.clone(), COSTUME_SIZE));
                 6
             }
@@ -291,7 +287,7 @@ impl Content {
                 8
             }
             Self::Shine { id, is_grand } => {
-                body.put_i32(id.clone());
+                body.put_i32(*id);
                 body.put_u8(is_grand.as_byte());
                 9
             }
@@ -308,8 +304,8 @@ impl Content {
             } => {
                 body.put(Self::serialize_string(stage.clone(), STAGE_SIZE));
                 body.put(Self::serialize_string(id.clone(), STAGE_ID_SIZE));
-                body.put_i8(scenario.clone());
-                body.put_u8(sub_scenario.clone());
+                body.put_i8(*scenario);
+                body.put_u8(*sub_scenario);
                 11
             }
         };
@@ -351,7 +347,7 @@ impl Content {
                     Self::Tag {
                         update_type: body.slice(0..1).get_u8(),
                         is_it: body.slice(1..2).get_u8().as_bool(),
-                        seconds: body.slice(2..3).get_u8() as u16,
+                        seconds: u16::from(body.slice(2..3).get_u8()),
                         minutes: body.slice(3..5).get_u16_le(),
                     }
                 } else {
@@ -397,21 +393,18 @@ impl Content {
     }
 
     pub fn is_connect(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Connect {
                 type_: _,
                 max_player: _,
                 client: _,
-            } => true,
-            _ => false,
-        }
+            }
+        )
     }
 
     pub fn is_disconnect(&self) -> bool {
-        match self {
-            Self::Disconnect => true,
-            _ => false,
-        }
+        matches!(self, Self::Disconnect)
     }
 }
 

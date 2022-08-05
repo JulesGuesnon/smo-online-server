@@ -92,7 +92,7 @@ impl Server {
 
         peers
             .iter()
-            .filter_map(|(id, p)| if p.connected { Some(id.clone()) } else { None })
+            .filter_map(|(id, p)| if p.connected { Some(*id) } else { None })
             .collect()
     }
 
@@ -201,7 +201,7 @@ impl Server {
 
             let peer = peers
                 .get(&id)
-                .ok_or(anyhow!("Peer is supposed to be in the HashMap"))?;
+                .ok_or_else(|| anyhow!("Peer is supposed to be in the HashMap"))?;
 
             for (uuid, other_peer) in self.peers.read().await.iter() {
                 if *uuid == id || !other_peer.connected {
@@ -216,33 +216,30 @@ impl Server {
 
                 let player = player.read().await;
 
-                let _ = peer
-                    .send(Packet::new(
+                peer.send(Packet::new(
+                    player.id,
+                    Content::Connect {
+                        type_: ConnectionType::First,
+                        max_player: self.settings.read().await.server.max_players as u16,
+                        client: player.name.clone(),
+                    },
+                ))
+                .await;
+
+                if let Some(costume) = &player.costume {
+                    peer.send(Packet::new(
                         player.id,
-                        Content::Connect {
-                            type_: ConnectionType::First,
-                            max_player: self.settings.read().await.server.max_players as u16,
-                            client: player.name.clone(),
+                        Content::Costume {
+                            body: costume.body.clone(),
+                            cap: costume.cap.clone(),
                         },
                     ))
                     .await;
-
-                if let Some(costume) = &player.costume {
-                    let _ = peer
-                        .send(Packet::new(
-                            player.id,
-                            Content::Costume {
-                                body: costume.body.clone(),
-                                cap: costume.cap.clone(),
-                            },
-                        ))
-                        .await;
                 }
 
                 drop(player);
             }
 
-            drop(peer);
             drop(peers);
 
             let player = self
@@ -275,7 +272,7 @@ impl Server {
 
                         tokio::spawn({
                             let server = self.clone();
-                            let id = player.id.clone();
+                            let id = player.id;
 
                             async move {
                                 let _ = server.sync_player_shine_bag(id).await;
@@ -317,7 +314,7 @@ impl Server {
                             player.is_speedrun = false;
 
                             if was_speedrun {
-                                let id = player.id.clone();
+                                let id = player.id;
 
                                 tokio::spawn({
                                     let server = self.clone();
@@ -386,11 +383,7 @@ impl Server {
                             let positions = join_all(players.iter().map(|p| async move {
                                 let player = p.read().await;
 
-                                (
-                                    player.get_stage(),
-                                    player.id.clone(),
-                                    player.last_position.clone(),
-                                )
+                                (player.get_stage(), player.id, player.last_position.clone())
                             }))
                             .await;
 
@@ -413,7 +406,6 @@ impl Server {
                             }
                         }
 
-                        drop(peer);
                         drop(peers);
 
                         should_broadcast
@@ -437,8 +429,8 @@ impl Server {
                         }
 
                         if (update_type & TagUpdate::Time.as_byte()) != 0 {
-                            player.time = Duration::minutes(*minutes as i64)
-                                + Duration::seconds(*seconds as i64);
+                            player.time = Duration::minutes(i64::from(*minutes))
+                                + Duration::seconds(i64::from(*seconds));
                         }
 
                         true
@@ -449,13 +441,13 @@ impl Server {
                         if player.loaded_save {
                             let mut shine_bag = self.shine_bag.write().await;
 
-                            let shine = (id.clone(), is_grand.clone());
+                            let shine = (*id, *is_grand);
 
-                            shine_bag.insert(shine.clone());
+                            shine_bag.insert(shine);
 
                             if player.shine_sync.get(&shine).is_none() {
                                 info!("Got moon {}", id);
-                                player.shine_sync.insert(shine.clone());
+                                player.shine_sync.insert(shine);
 
                                 tokio::spawn({
                                     let server = self.clone();
@@ -485,12 +477,12 @@ impl Server {
                         tokio::spawn({
                             let server = self.clone();
 
-                            let id = packet.id.clone();
-                            let position = game_pos.clone();
-                            let quaternion = quaternion.clone();
+                            let id = packet.id;
+                            let position = *game_pos;
+                            let quaternion = *quaternion;
                             let animation_blend_weights = animation_blend_weights.clone();
-                            let act = act.clone();
-                            let subact = subact.clone();
+                            let act = *act;
+                            let subact = *subact;
 
                             let position = position + Vec3::Y * size;
                             let quaternion = quaternion
@@ -702,19 +694,8 @@ impl Server {
     async fn on_new_peer(&self, peer: Peer) -> Result<Peer> {
         let settings = self.settings.read().await;
 
-        let is_ip_banned = settings
-            .ban_list
-            .ips
-            .iter()
-            .find(|addr| **addr == peer.ip)
-            .is_some();
-
-        let is_id_banned = settings
-            .ban_list
-            .ids
-            .iter()
-            .find(|addr| **addr == peer.id)
-            .is_some();
+        let is_ip_banned = settings.ban_list.ips.iter().any(|addr| *addr == peer.ip);
+        let is_id_banned = settings.ban_list.ids.iter().any(|addr| peer.id == *addr);
 
         drop(settings);
 
@@ -745,7 +726,7 @@ impl Server {
             .players
             .get(&id)
             .await
-            .ok_or(anyhow!("Couldn't find player"))?;
+            .ok_or_else(|| anyhow!("Couldn't find player"))?;
 
         let mut player = player.write().await;
 
@@ -755,18 +736,18 @@ impl Server {
 
         let bag = self.shine_bag.read().await;
         let peers = self.peers.read().await;
-        let peer = peers.get(&id).ok_or(anyhow!("Couldn't find peer"))?;
+        let peer = peers
+            .get(&id)
+            .ok_or_else(|| anyhow!("Couldn't find peer"))?;
 
         for (shine_id, is_grand) in bag.difference(&player.shine_sync.clone()) {
-            player
-                .shine_sync
-                .insert((shine_id.clone(), is_grand.clone()));
+            player.shine_sync.insert((*shine_id, *is_grand));
 
             peer.send(Packet::new(
-                id.clone(),
+                id,
                 Content::Shine {
-                    id: shine_id.clone(),
-                    is_grand: is_grand.clone(),
+                    id: *shine_id,
+                    is_grand: *is_grand,
                 },
             ))
             .await
@@ -855,7 +836,7 @@ impl Server {
         )
         .await
         .into_iter()
-        .filter_map(|v| v);
+        .flatten();
 
         let mut peers = self.peers.write().await;
 
@@ -910,5 +891,5 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
         Bytes::new()
     };
 
-    Ok(header.make_packet(body)?)
+    header.make_packet(body)
 }

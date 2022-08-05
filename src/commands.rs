@@ -1,5 +1,7 @@
+use std::fmt::Display;
 use std::process::exit;
 use std::str::FromStr;
+use std::string::ToString;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -129,16 +131,38 @@ pub struct Help {
 impl Help {
     pub fn new(usage: &str, description: &str) -> Self {
         Self {
-            usage: usage.to_string(),
-            description: description.to_string(),
+            usage: usage.to_owned(),
+            description: description.to_owned(),
         }
     }
 
-    pub fn to_string(&self) -> String {
-        if self.description == "" {
-            format!("{}\n{}\n", "[Usage]".cyan(), self.usage,)
+    pub fn merge(helps: Vec<Help>) -> Self {
+        helps.into_iter().fold(
+            Self {
+                usage: "".to_owned(),
+                description: "Enter one of the command above to get informations about it"
+                    .to_owned(),
+            },
+            |mut acc, help| {
+                acc.usage = format!(
+                    "{}{}{}",
+                    acc.usage,
+                    if acc.usage.is_empty() { "" } else { "\n" },
+                    help.usage
+                );
+                acc
+            },
+        )
+    }
+}
+
+impl Display for Help {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.description.is_empty() {
+            write!(f, "{}\n{}\n", "[Usage]".cyan(), self.usage,)
         } else {
-            format!(
+            write!(
+                f,
                 "{}\n{}\n\n{}\n{}\n",
                 "[Usage]".cyan(),
                 self.usage,
@@ -146,25 +170,6 @@ impl Help {
                 self.description
             )
         }
-    }
-
-    pub fn merge(helps: Vec<Help>) -> Self {
-        helps.into_iter().fold(
-            Self {
-                usage: "".to_string(),
-                description: "Enter one of the command above to get informations about it"
-                    .to_string(),
-            },
-            |mut acc, help| {
-                acc.usage = format!(
-                    "{}{}{}",
-                    acc.usage,
-                    if acc.usage == "" { "" } else { "\n" },
-                    help.usage
-                );
-                acc
-            },
-        )
     }
 }
 
@@ -255,24 +260,22 @@ pub enum Command {
 impl Command {
     fn wildcard_filter(list: Vec<String>) -> Vec<String> {
         if list.contains(&String::from("*")) {
-            vec!["*".to_string()]
+            vec!["*".to_owned()]
         } else {
             list
         }
     }
 
     pub fn parse(stdin: String) -> Result<Self, String> {
-        let mut splitted: Vec<&str> = stdin.split(' ').filter(|v| *v != "").collect();
+        let mut splitted: Vec<&str> = stdin.split(' ').filter(|v| !(*v).is_empty()).collect();
 
-        if splitted.len() == 0 {
-            return Ok(Self::Unknown {
-                cmd: "".to_string(),
-            });
+        if splitted.is_empty() {
+            return Ok(Self::Unknown { cmd: "".to_owned() });
         }
 
         let cmd = splitted.remove(0);
 
-        if splitted.len() == 0 && (cmd != "list" && cmd != "stop" && cmd != "loadsettings") {
+        if splitted.is_empty() && (cmd != "list" && cmd != "stop" && cmd != "loadsettings") {
             let cmd = Self::default_from_str(cmd);
             return match &cmd {
                 Self::Unknown { cmd: _ } => Ok(cmd),
@@ -298,21 +301,21 @@ impl Command {
             }
             "send" => Self::Send {
                 stage: Stage::from_str(splitted.remove(0))?,
-                id: splitted.remove(0).to_string(),
+                id: splitted.remove(0).to_owned(),
                 scenario: splitted
                     .remove(0)
                     .parse::<i8>()
-                    .map_err(|_| "Scenario should be a number between -1 and 127".to_string())?,
-                players: Self::wildcard_filter(splitted.iter().map(|s| s.to_string()).collect()),
+                    .map_err(|_| "Scenario should be a number between -1 and 127".to_owned())?,
+                players: Self::wildcard_filter(splitted.iter().map(ToString::to_string).collect()),
             },
             "scenario" if splitted.len() < 2 => {
                 return Err(Self::default_from_str("scenario").help().to_string());
             }
             "scenario" => Self::Scenario {
-                subcmd: splitted.remove(0).to_string(),
-                value: splitted.remove(0).to_string(),
+                subcmd: splitted.remove(0).to_owned(),
+                value: splitted.remove(0).to_owned(),
             },
-            "maxplayers" if splitted.len() < 1 => {
+            "maxplayers" if splitted.is_empty() => {
                 return Err(Self::default_from_str("maxplayers").help().to_string());
             }
             "maxplayers" => Self::MaxPlayers {
@@ -331,7 +334,7 @@ impl Command {
                 match subcmd {
                     "time" if splitted.len() == 3 => Self::Tag {
                         subcmd: TagSubCmd::Time {
-                            username: splitted.remove(0).to_string(),
+                            username: splitted.remove(0).to_owned(),
                             minutes: splitted.remove(0).parse().map_err(|_| {
                                 "Invalid mintues, value should be an integer between 0 and 65535"
                             })?,
@@ -342,7 +345,7 @@ impl Command {
                     },
                     "seeking" if splitted.len() == 2 => Self::Tag {
                         subcmd: TagSubCmd::Seeking {
-                            username: splitted.remove(0).to_string(),
+                            username: splitted.remove(0).to_owned(),
                             state: match splitted.remove(0) {
                                 "seeker" => TagState::Seeker,
                                 "hider" => TagState::Hider,
@@ -369,7 +372,7 @@ impl Command {
                     }
                 }
             }
-            "flip" if splitted.len() < 1 => {
+            "flip" if splitted.is_empty() => {
                 return Err(Self::default_from_str("flip").help().to_string());
             }
             "flip" => match splitted.remove(0) {
@@ -430,7 +433,7 @@ impl Command {
             },
             "stop" => Self::Stop,
             "loadsettings" => Self::LoadSettings,
-            v => Self::Unknown { cmd: v.to_string() },
+            v => Self::Unknown { cmd: v.to_owned() },
         };
 
         Ok(parsed)
@@ -443,21 +446,21 @@ impl Command {
             "ban" => Self::Ban { players: vec![] },
             "send" => Self::Send {
                 stage: Stage::Cap,
-                id: "".to_string(),
+                id: "".to_owned(),
                 scenario: 0,
                 players: vec![],
             },
             "sendall" => Self::SendAll { stage: Stage::Cap },
             "scenario" => Self::Scenario {
-                subcmd: "".to_string(),
-                value: "".to_string(),
+                subcmd: "".to_owned(),
+                value: "".to_owned(),
             },
             "maxplayers" => Self::MaxPlayers { count: 0 },
             "list" => Self::List,
             "loadsettings" => Self::LoadSettings,
             "tag" => Self::Tag {
                 subcmd: TagSubCmd::Seeking {
-                    username: "".to_string(),
+                    username: "".to_owned(),
                     state: TagState::Hider,
                 },
             },
@@ -468,7 +471,7 @@ impl Command {
                 subcmd: ShineSubCmd::List,
             },
             "stop" => Self::Stop,
-            v => Self::Unknown { cmd: v.to_string() },
+            v => Self::Unknown { cmd: v.to_owned() },
         }
     }
 
@@ -630,8 +633,8 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 .broadcast(Packet::new(
                     Uuid::nil(),
                     Content::ChangeStage {
-                        stage: "baguette".to_string(),
-                        id: "dufromage".to_string(),
+                        stage: "baguette".to_owned(),
+                        id: "dufromage".to_owned(),
                         scenario: 21,
                         sub_scenario: 42,
                     },
@@ -646,8 +649,8 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                     Packet::new(
                         Uuid::nil(),
                         Content::ChangeStage {
-                            stage: "baguette".to_string(),
-                            id: "dufromage".to_string(),
+                            stage: "baguette".to_owned(),
+                            id: "dufromage".to_owned(),
                             scenario: 21,
                             sub_scenario: 42,
                         },
@@ -680,7 +683,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                     Uuid::nil(),
                     Content::ChangeStage {
                         id: id.clone(),
-                        stage: stage.to_str().to_string(),
+                        stage: stage.to_str().to_owned(),
                         scenario,
                         sub_scenario: 0,
                     },
@@ -706,7 +709,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                         Uuid::nil(),
                         Content::ChangeStage {
                             id: id.clone(),
-                            stage: stage.to_str().to_string(),
+                            stage: stage.to_str().to_owned(),
                             scenario,
                             sub_scenario: 0,
                         },
@@ -738,8 +741,8 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 .broadcast(Packet::new(
                     Uuid::nil(),
                     Content::ChangeStage {
-                        id: "".to_string(),
-                        stage: stage.to_str().to_string(),
+                        id: "".to_owned(),
+                        stage: stage.to_str().to_owned(),
                         scenario: -1,
                         sub_scenario: 0,
                     },
@@ -775,8 +778,8 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 peer.send(Packet::new(
                     Uuid::nil(),
                     Content::ChangeStage {
-                        stage: "baguette".to_string(),
-                        id: "dufromage".to_string(),
+                        stage: "baguette".to_owned(),
+                        id: "dufromage".to_owned(),
                         scenario: 21,
                         sub_scenario: 42,
                     },
@@ -799,16 +802,10 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                     settings.save().await;
                     info!("Updated merge to {}", false);
                 } else {
-                    println!(
-                        "{}",
-                        Command::default_from_str("scenario").help().to_string()
-                    )
+                    println!("{}", Command::default_from_str("scenario").help())
                 }
             }
-            _ => println!(
-                "{}",
-                Command::default_from_str("scenario").help().to_string()
-            ),
+            _ => println!("{}", Command::default_from_str("scenario").help()),
         },
         Command::MaxPlayers { count } => {
             let mut settings = server.settings.write().await;
@@ -829,7 +826,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 format!(
                     "{}{}- [{}] -> {}",
                     acc,
-                    if acc == "" { "" } else { "\n" },
+                    if acc.is_empty() { "" } else { "\n" },
                     player.name,
                     player.id
                 )
@@ -857,7 +854,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 Content::Tag {
                     update_type: TagUpdate::Time.as_byte(),
                     is_it: false,
-                    seconds: seconds as u16,
+                    seconds: u16::from(seconds),
                     minutes,
                 },
             );
@@ -901,7 +898,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 },
         } => {
             tokio::spawn(async move {
-                sleep(Duration::from_secs(time as u64)).await;
+                sleep(Duration::from_secs(u64::from(time))).await;
 
                 let players = server.players.all_ids_and_names().await;
 
@@ -962,7 +959,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                     .flip
                     .players
                     .iter()
-                    .map(|id| id.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<String>>()
                     .join(", ")
             );
@@ -975,7 +972,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
             if !settings.flip.players.contains(&user_id) {
                 drop(settings);
                 let mut settings = server.settings.write().await;
-                settings.flip.players.push(user_id.clone());
+                settings.flip.players.push(user_id);
 
                 settings.save().await;
 
@@ -1026,7 +1023,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
         } => {
             let bag = server.shine_bag.read().await;
 
-            let string = bag.iter().fold("".to_string(), |acc, (id, is_grand)| {
+            let string = bag.iter().fold("".to_owned(), |acc, (id, is_grand)| {
                 format!(
                     "{}{}{}",
                     acc,
@@ -1094,11 +1091,7 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
                 "\n{} {}\n\n{}",
                 "Invalid command:".red(),
                 cmd,
-                Command::Unknown {
-                    cmd: "".to_string()
-                }
-                .help()
-                .to_string()
+                Command::Unknown { cmd: "".to_owned() }.help()
             );
         }
     }
