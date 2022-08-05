@@ -1,17 +1,18 @@
-use crate::{
-    packet::{Content, Packet, TagUpdate},
-    server::Server,
-    settings::{FlipPov, Settings},
-};
+use std::process::exit;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
+
 use colored::Colorize;
 use futures::future::join_all;
-use std::{process::exit, str::FromStr, sync::Arc, time::Duration};
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    time::sleep,
-};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::time::sleep;
 use tracing::{error, info};
 use uuid::Uuid;
+
+use crate::packet::{Content, Packet, TagUpdate};
+use crate::server::Server;
+use crate::settings::{FlipPov, Settings};
 
 trait IsWildcard {
     fn is_wildcard(&self) -> bool;
@@ -517,7 +518,7 @@ impl Command {
                 let start_desc = format!("- {} will start the game after the input time is over and set the input players to seeker and the rest to hider", "tag start".cyan());
 
                 Help::new(
-                    &format!("{}\n{}\n{}", time_usage, seeking, start), 
+                    &format!("{}\n{}\n{}", time_usage, seeking, start),
                     &format!("{}\n{}\n{}", time_desc, seeking_desc, start_desc)
                 )
             },
@@ -536,7 +537,7 @@ impl Command {
 
 
                 Help::new(
-                    &format!("{}\n{}\n{}\n{}", list, clear, sync, send), 
+                    &format!("{}\n{}\n{}\n{}", list, clear, sync, send),
                     &format!("{}\n{}\n{}\n{}", list_desc, clear_desc, sync_desc, send_desc)
                 )
             },
@@ -558,7 +559,7 @@ impl Command {
 
 
                 Help::new(
-                    &format!("{}\n{}\n{}\n{}\n{}", list, add, remove, set, pov), 
+                    &format!("{}\n{}\n{}\n{}\n{}", list, add, remove, set, pov),
                     &format!("{}\n{}\n{}\n{}\n{}", list_desc, add_desc, remove_desc, set_desc, pov_desc)
                 )
             },

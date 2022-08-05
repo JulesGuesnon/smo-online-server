@@ -1,11 +1,11 @@
-use crate::packet::Packet;
 use std::net::IpAddr;
-use tokio::{
-    io::{AsyncWriteExt, WriteHalf},
-    net::TcpStream,
-    sync::Mutex,
-};
+
+use tokio::io::{AsyncWriteExt, WriteHalf};
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use uuid::Uuid;
+
+use crate::packet::Packet;
 
 #[derive(Debug)]
 pub struct Peer {

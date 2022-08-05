@@ -1,12 +1,12 @@
-use crate::packet::{Content, Packet};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
 use chrono::Duration;
 use futures::future::join_all;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
 use tokio::sync::RwLock;
 use uuid::Uuid;
+
+use crate::packet::{Content, Packet};
 
 const MARIO_SIZE: f32 = 160.;
 const MARIO_SIZE_2D: f32 = 180.;

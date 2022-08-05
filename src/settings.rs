@@ -1,9 +1,9 @@
+use std::net::IpAddr;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{net::IpAddr, str::FromStr};
-use tokio::{
-    fs::OpenOptions,
-    io::{AsyncReadExt, AsyncWriteExt},
-};
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::info;
 use uuid::Uuid;
 

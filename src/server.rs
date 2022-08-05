@@ -1,28 +1,24 @@
-use crate::{
-    packet::{ConnectionType, Content, Header, Packet, TagUpdate, HEADER_SIZE},
-    peer::Peer,
-    players::{Player, Players, SharedPlayer},
-    settings::Settings,
-};
-use anyhow::anyhow;
-use anyhow::Result;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use chrono::Duration;
-use futures::{future::join_all, Future};
+use futures::future::join_all;
+use futures::Future;
 use glam::{Mat4, Quat, Vec3};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tokio::{
-    fs::{File, OpenOptions},
-    io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf},
-    net::TcpStream,
-    sync::RwLock,
-    time::sleep,
-};
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf};
+use tokio::net::TcpStream;
+use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::{debug, info};
 use uuid::Uuid;
+
+use crate::packet::{ConnectionType, Content, Header, Packet, TagUpdate, HEADER_SIZE};
+use crate::peer::Peer;
+use crate::players::{Player, Players, SharedPlayer};
+use crate::settings::Settings;
 
 pub struct Server {
     pub peers: RwLock<HashMap<Uuid, Peer>>,

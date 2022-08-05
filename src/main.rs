@@ -1,12 +1,14 @@
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
+
 use colored::Colorize;
 use server::Server;
 use settings::Settings;
-use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
-use tokio::{
-    io::{self, AsyncWriteExt},
-    net::TcpListener,
-    time::sleep,
-};
+use tokio::io::{self, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::time::sleep;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 
