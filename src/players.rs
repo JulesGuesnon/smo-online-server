@@ -29,7 +29,7 @@ pub struct Player {
     pub last_game_packet: Option<Packet>,
     pub last_position: Option<Content>,
     // id, is_grand
-    pub shine_sync: HashSet<(i32, bool)>,
+    pub shine_sync: HashSet<i32>,
     pub loaded_save: bool,
     pub time: Duration,
 }

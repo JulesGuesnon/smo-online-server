@@ -1023,14 +1023,9 @@ async fn exec_cmd(server: Arc<Server>, cmd: Command) {
         } => {
             let bag = server.shine_bag.read().await;
 
-            let string = bag.iter().fold("".to_owned(), |acc, (id, is_grand)| {
-                format!(
-                    "{}{}{}",
-                    acc,
-                    id,
-                    if *is_grand { " (grand), " } else { ", " }
-                )
-            });
+            let string = bag
+                .iter()
+                .fold("".to_owned(), |acc, id| format!("{}{}{}", acc, id, ", "));
 
             info!("{}", string);
         }

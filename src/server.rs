@@ -23,8 +23,7 @@ use crate::settings::Settings;
 
 pub struct Server {
     pub peers: RwLock<HashMap<Uuid, Peer>>,
-    // (id, is_grand)
-    pub shine_bag: RwLock<HashSet<(i32, bool)>>,
+    pub shine_bag: RwLock<HashSet<i32>>,
     pub players: Players,
     pub settings: RwLock<Settings>,
 }
@@ -461,13 +460,13 @@ impl Server {
 
                         true
                     }
-                    Content::Shine { id, is_grand } => {
+                    Content::Shine { id } => {
                         let mut player = player.write().await;
 
                         if player.loaded_save {
                             let mut shine_bag = self.shine_bag.write().await;
 
-                            let shine = (*id, *is_grand);
+                            let shine = *id;
 
                             shine_bag.insert(shine);
 
@@ -767,17 +766,11 @@ impl Server {
         let peers = self.peers.read().await;
         let peer = peers.get(&id).ok_or_else(|| eyre!("Couldn't find peer"))?;
 
-        for (shine_id, is_grand) in bag.difference(&player.shine_sync.clone()) {
-            player.shine_sync.insert((*shine_id, *is_grand));
+        for shine_id in bag.difference(&player.shine_sync.clone()) {
+            player.shine_sync.insert(*shine_id);
 
-            peer.send(Packet::new(
-                id,
-                Content::Shine {
-                    id: *shine_id,
-                    is_grand: *is_grand,
-                },
-            ))
-            .await
+            peer.send(Packet::new(id, Content::Shine { id: *shine_id }))
+                .await
         }
 
         Ok(())
