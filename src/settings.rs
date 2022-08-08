@@ -1,9 +1,8 @@
+use std::net::IpAddr;
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{net::IpAddr, str::FromStr};
-use tokio::{
-    fs::OpenOptions,
-    io::{AsyncReadExt, AsyncWriteExt},
-};
 use tracing::info;
 use uuid::Uuid;
 
@@ -27,6 +26,7 @@ impl FlipPov {
         }
     }
 
+    #[inline]
     pub fn to_str(&self) -> &'static str {
         match self {
             Self::Both => "both",
@@ -37,6 +37,7 @@ impl FlipPov {
 }
 
 impl Default for FlipPov {
+    #[inline(always)]
     fn default() -> Self {
         Self::Both
     }
@@ -50,6 +51,21 @@ pub struct Flip {
 }
 
 #[derive(Deserialize, Serialize)]
+pub struct SpecialCostumes {
+    pub costumes: Vec<String>,
+    pub allowed_players: Vec<Uuid>,
+}
+
+impl Default for SpecialCostumes {
+    fn default() -> Self {
+        Self {
+            costumes: vec!["MarioInvisible".to_owned()],
+            allowed_players: Default::default(),
+        }
+    }
+}
+
+#[derive(Default, Deserialize, Serialize)]
 pub struct BanList {
     pub enabled: bool,
     pub ids: Vec<Uuid>,
@@ -70,16 +86,6 @@ impl BanList {
     }
 }
 
-impl Default for BanList {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ids: vec![],
-            ips: vec![],
-        }
-    }
-}
-
 #[derive(Deserialize, Serialize)]
 pub struct PersistShines {
     pub enabled: bool,
@@ -95,17 +101,9 @@ impl Default for PersistShines {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Scenario {
     pub merge_enabled: bool,
-}
-
-impl Default for Scenario {
-    fn default() -> Self {
-        Self {
-            merge_enabled: false,
-        }
-    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -132,51 +130,51 @@ pub struct Settings {
     pub scenario: Scenario,
     pub persist_shines: PersistShines,
     pub flip: Flip,
+    pub special_costumes: SpecialCostumes,
 }
 
 impl Settings {
+    #[inline(always)]
+    fn path_buf() -> PathBuf {
+        PathBuf::from("./settings.json")
+    }
+
     pub async fn load() -> Self {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open("settings.json")
+        let path = Self::path_buf();
+        if !path.exists() {
+            return Self::load_default().await;
+        }
+
+        let body = tokio::fs::read(path)
             .await
-            .expect("Settings couldn't be loaded or created");
+            .expect("Failed to read settings");
 
-        let mut content = String::from("");
-        file.read_to_string(&mut content).await.unwrap();
-
-        match serde_json::from_str(&content) {
+        match serde_json::from_slice(&body) {
             Ok(v) => {
                 info!("Loaded settings.json");
                 v
             }
             Err(_) => {
                 info!("Creating file settings.json. If you want to update it, stop the server, modify the file and restart the server");
-
-                let settings = Self::default();
-
-                let serialized = serde_json::to_string_pretty(&settings).unwrap();
-
-                file.write_all(serialized.as_bytes()).await.unwrap();
-
-                settings
+                Self::load_default().await
             }
         }
     }
 
-    pub async fn save(&self) {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open("settings.json")
-            .await
-            .expect("Settings couldn't be loaded or created");
+    async fn load_default() -> Self {
+        let settings = Self::default();
+        settings.save().await;
 
+        settings
+    }
+
+    pub async fn save(&self) {
+        let path = Self::path_buf();
         let serialized = serde_json::to_string_pretty(self).unwrap();
 
-        file.write_all(serialized.as_bytes()).await.unwrap();
+        tokio::fs::write(path, serialized)
+            .await
+            .expect("Settings failed to save");
     }
 
     pub fn flip_in(&self, id: &Uuid) -> bool {
@@ -189,5 +187,13 @@ impl Settings {
         self.flip.enabled
             && (self.flip.pov == FlipPov::Both || self.flip.pov == FlipPov::Self_)
             && !self.flip.players.contains(id)
+    }
+
+    pub fn is_special_costume(&self, costume: &String) -> bool {
+        self.special_costumes.costumes.contains(costume)
+    }
+
+    pub fn special_costume_allowed(&self, id: &Uuid) -> bool {
+        self.special_costumes.allowed_players.contains(id)
     }
 }

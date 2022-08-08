@@ -1,33 +1,29 @@
-use crate::{
-    packet::{ConnectionType, Content, Header, Packet, TagUpdate, HEADER_SIZE},
-    peer::Peer,
-    players::{Player, Players, SharedPlayer},
-    settings::Settings,
-};
-use anyhow::anyhow;
-use anyhow::Result;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
 use bytes::Bytes;
 use chrono::Duration;
-use futures::{future::join_all, Future};
+use color_eyre::eyre::eyre;
+use color_eyre::Result;
+use futures::future::join_all;
+use futures::Future;
 use glam::{Mat4, Quat, Vec3};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tokio::{
-    fs::{File, OpenOptions},
-    io::{split, AsyncReadExt, AsyncWriteExt, ReadHalf},
-    net::TcpStream,
-    sync::RwLock,
-    time::sleep,
-};
+use tokio::fs::OpenOptions;
+use tokio::io::{split, AsyncReadExt, ReadHalf};
+use tokio::net::TcpStream;
+use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::{debug, info};
 use uuid::Uuid;
 
+use crate::packet::{ConnectionType, Content, Header, Packet, TagUpdate, HEADER_SIZE};
+use crate::peer::Peer;
+use crate::players::{Player, Players, SharedPlayer};
+use crate::settings::Settings;
+
 pub struct Server {
     pub peers: RwLock<HashMap<Uuid, Peer>>,
-    // (id, is_grand)
-    pub shine_bag: RwLock<HashSet<(i32, bool)>>,
+    pub shine_bag: RwLock<HashSet<i32>>,
     pub players: Players,
     pub settings: RwLock<Settings>,
 }
@@ -87,7 +83,7 @@ impl Server {
 
             Ok(())
         } else {
-            Err(anyhow!("User {} not found", id))
+            Err(eyre!("User {} not found", id))
         }
     }
 
@@ -96,7 +92,7 @@ impl Server {
 
         peers
             .iter()
-            .filter_map(|(id, p)| if p.connected { Some(id.clone()) } else { None })
+            .filter_map(|(id, p)| if p.connected { Some(*id) } else { None })
             .collect()
     }
 
@@ -105,7 +101,7 @@ impl Server {
 
         let run = || async {
             let ip = socket.peer_addr()?.ip();
-            debug!("New connection from: {}", ip);
+            debug!(%ip, "Accepted incoming connection");
 
             let (mut reader, writer) = split(socket);
 
@@ -126,7 +122,7 @@ impl Server {
                     "Player {} didn't send connection packet on first connection",
                     connect_packet.id
                 );
-                return Err(anyhow!("Didn't receive connection packet as first packet"));
+                return Err(eyre!("Didn't receive connection packet as first packet"));
             }
 
             let peers = self.peers.read().await;
@@ -136,8 +132,8 @@ impl Server {
                 .fold(0, |acc, p| if p.1.connected { acc + 1 } else { 0 });
 
             if connected_peers == self.settings.read().await.server.max_players {
-                info!("Player {} couldn't join server is full", connect_packet.id);
-                return Err(anyhow!("Server full"));
+                info!("Player {} couldn't join: server is full", connect_packet.id);
+                return Err(eyre!("Server full"));
             }
 
             drop(peers);
@@ -187,7 +183,7 @@ impl Server {
                 }
                 _ => {
                     debug!("This case isn't supposed to be reach");
-                    return Err(anyhow!("This case isn't supposed to be reach"));
+                    return Err(eyre!("This case isn't supposed to be reach"));
                 }
             }
 
@@ -205,7 +201,7 @@ impl Server {
 
             let peer = peers
                 .get(&id)
-                .ok_or(anyhow!("Peer is supposed to be in the HashMap"))?;
+                .ok_or_else(|| eyre!("Peer is supposed to be in the HashMap"))?;
 
             for (uuid, other_peer) in self.peers.read().await.iter() {
                 if *uuid == id || !other_peer.connected {
@@ -220,33 +216,30 @@ impl Server {
 
                 let player = player.read().await;
 
-                let _ = peer
-                    .send(Packet::new(
+                peer.send(Packet::new(
+                    player.id,
+                    Content::Connect {
+                        type_: ConnectionType::First,
+                        max_player: self.settings.read().await.server.max_players as u16,
+                        client: player.name.clone(),
+                    },
+                ))
+                .await;
+
+                if let Some(costume) = &player.costume {
+                    peer.send(Packet::new(
                         player.id,
-                        Content::Connect {
-                            type_: ConnectionType::First,
-                            max_player: self.settings.read().await.server.max_players as u16,
-                            client: player.name.clone(),
+                        Content::Costume {
+                            body: costume.body.clone(),
+                            cap: costume.cap.clone(),
                         },
                     ))
                     .await;
-
-                if let Some(costume) = &player.costume {
-                    let _ = peer
-                        .send(Packet::new(
-                            player.id,
-                            Content::Costume {
-                                body: costume.body.clone(),
-                                cap: costume.cap.clone(),
-                            },
-                        ))
-                        .await;
                 }
 
                 drop(player);
             }
 
-            drop(peer);
             drop(peers);
 
             let player = self
@@ -263,7 +256,7 @@ impl Server {
                 } else if packet.id != id {
                     debug!("Id mismatch: received {} - expecting {}", packet.id, id);
 
-                    return Err(anyhow!(
+                    return Err(eyre!(
                         "Id mismatch: received {} - expecting {}",
                         packet.id,
                         id
@@ -279,14 +272,40 @@ impl Server {
 
                         tokio::spawn({
                             let server = self.clone();
-                            let id = player.id.clone();
+                            let id = player.id;
 
                             async move {
                                 let _ = server.sync_player_shine_bag(id).await;
                             }
                         });
 
-                        true
+                        let settings = self.settings.read().await;
+
+                        let is_allowed_special = settings.special_costume_allowed(&player.id);
+                        let is_cap_special = settings.is_special_costume(cap);
+                        let is_body_special = settings.is_special_costume(body);
+
+                        drop(settings);
+                        let fallback = "Mario".to_owned();
+
+                        let cap = match (is_cap_special, is_allowed_special) {
+                            (true, false) => fallback.clone(),
+                            _ => cap.clone(),
+                        };
+
+                        let body = match (is_body_special, is_allowed_special) {
+                            (true, false) => fallback,
+                            _ => body.clone(),
+                        };
+
+                        let outgoing = Packet {
+                            id: packet.id,
+                            content: Content::Costume { body, cap },
+                        };
+
+                        self.broadcast(outgoing).await;
+
+                        false
                     }
                     Content::Game {
                         is_2d,
@@ -321,14 +340,12 @@ impl Server {
                             player.is_speedrun = false;
 
                             if was_speedrun {
-                                let id = player.id.clone();
+                                let id = player.id;
 
                                 tokio::spawn({
                                     let server = self.clone();
                                     async move {
-                                        info!(
-                                    "Entered Cascade with moon sync disabled, enabling moon sync"
-                                );
+                                        info!("Entered Cascade with moon sync disabled, enabling moon sync");
                                         sleep(std::time::Duration::from_secs(15)).await;
                                         let _ = server.sync_player_shine_bag(id).await;
                                     }
@@ -390,11 +407,7 @@ impl Server {
                             let positions = join_all(players.iter().map(|p| async move {
                                 let player = p.read().await;
 
-                                (
-                                    player.get_stage(),
-                                    player.id.clone(),
-                                    player.last_position.clone(),
-                                )
+                                (player.get_stage(), player.id, player.last_position.clone())
                             }))
                             .await;
 
@@ -417,7 +430,6 @@ impl Server {
                             }
                         }
 
-                        drop(peer);
                         drop(peers);
 
                         should_broadcast
@@ -441,25 +453,25 @@ impl Server {
                         }
 
                         if (update_type & TagUpdate::Time.as_byte()) != 0 {
-                            player.time = Duration::minutes(*minutes as i64)
-                                + Duration::seconds(*seconds as i64);
+                            player.time = Duration::minutes(i64::from(*minutes))
+                                + Duration::seconds(i64::from(*seconds));
                         }
 
                         true
                     }
-                    Content::Shine { id, is_grand } => {
+                    Content::Shine { id } => {
                         let mut player = player.write().await;
 
                         if player.loaded_save {
                             let mut shine_bag = self.shine_bag.write().await;
 
-                            let shine = (id.clone(), is_grand.clone());
+                            let shine = *id;
 
-                            shine_bag.insert(shine.clone());
+                            shine_bag.insert(shine);
 
                             if player.shine_sync.get(&shine).is_none() {
                                 info!("Got moon {}", id);
-                                player.shine_sync.insert(shine.clone());
+                                player.shine_sync.insert(shine);
 
                                 tokio::spawn({
                                     let server = self.clone();
@@ -481,6 +493,7 @@ impl Server {
                     } if self.settings.read().await.flip_in(&packet.id) => {
                         let mut player = player.write().await;
                         player.last_position = Some(packet.content.clone());
+                        player.loaded_save = true;
                         let size = player.size();
                         let sender_stage = player.get_stage();
 
@@ -489,12 +502,12 @@ impl Server {
                         tokio::spawn({
                             let server = self.clone();
 
-                            let id = packet.id.clone();
-                            let position = game_pos.clone();
-                            let quaternion = quaternion.clone();
+                            let id = packet.id;
+                            let position = *game_pos;
+                            let quaternion = *quaternion;
                             let animation_blend_weights = animation_blend_weights.clone();
-                            let act = act.clone();
-                            let subact = subact.clone();
+                            let act = *act;
+                            let subact = *subact;
 
                             let position = position + Vec3::Y * size;
                             let quaternion = quaternion
@@ -550,6 +563,7 @@ impl Server {
                     } if self.settings.read().await.flip_not_in(&packet.id) => {
                         let mut player = player.write().await;
                         player.last_position = Some(packet.content.clone());
+                        player.loaded_save = true;
                         let sender_stage = player.get_stage();
                         drop(player);
 
@@ -620,6 +634,7 @@ impl Server {
                     } => {
                         let mut player = player.write().await;
                         player.last_position = Some(packet.content.clone());
+                        player.loaded_save = true;
                         let sender_stage = player.get_stage();
                         drop(player);
 
@@ -706,19 +721,8 @@ impl Server {
     async fn on_new_peer(&self, peer: Peer) -> Result<Peer> {
         let settings = self.settings.read().await;
 
-        let is_ip_banned = settings
-            .ban_list
-            .ips
-            .iter()
-            .find(|addr| **addr == peer.ip)
-            .is_some();
-
-        let is_id_banned = settings
-            .ban_list
-            .ids
-            .iter()
-            .find(|addr| **addr == peer.id)
-            .is_some();
+        let is_ip_banned = settings.ban_list.ips.iter().any(|addr| *addr == peer.ip);
+        let is_id_banned = settings.ban_list.ids.iter().any(|addr| peer.id == *addr);
 
         drop(settings);
 
@@ -728,7 +732,7 @@ impl Server {
                 peer.ip, peer.id
             );
 
-            Err(anyhow!(
+            Err(eyre!(
                 "Banned player {} with ip {} tried to joined",
                 peer.ip,
                 peer.id
@@ -749,31 +753,23 @@ impl Server {
             .players
             .get(&id)
             .await
-            .ok_or(anyhow!("Couldn't find player"))?;
+            .ok_or_else(|| eyre!("Couldn't find player"))?;
 
         let mut player = player.write().await;
 
         if player.is_speedrun {
-            return Err(anyhow!("Player is in speedrun mode"));
+            return Err(eyre!("Player is in speedrun mode"));
         }
 
         let bag = self.shine_bag.read().await;
         let peers = self.peers.read().await;
-        let peer = peers.get(&id).ok_or(anyhow!("Couldn't find peer"))?;
+        let peer = peers.get(&id).ok_or_else(|| eyre!("Couldn't find peer"))?;
 
-        for (shine_id, is_grand) in bag.difference(&player.shine_sync.clone()) {
-            player
-                .shine_sync
-                .insert((shine_id.clone(), is_grand.clone()));
+        for shine_id in bag.difference(&player.shine_sync.clone()) {
+            player.shine_sync.insert(*shine_id);
 
-            peer.send(Packet::new(
-                id.clone(),
-                Content::Shine {
-                    id: shine_id.clone(),
-                    is_grand: is_grand.clone(),
-                },
-            ))
-            .await
+            peer.send(Packet::new(id, Content::Shine { id: *shine_id }))
+                .await
         }
 
         Ok(())
@@ -794,11 +790,12 @@ impl Server {
 
         let serialized = serde_json::to_string(&shines).unwrap();
 
-        let mut file = File::open(file_name)
+        let _ = tokio::fs::write(file_name, serialized)
             .await
-            .expect("Shine file can't be opened");
-
-        let _ = file.write_all(serialized.as_bytes()).await;
+            .map_err(|err| {
+                tracing::error!(%err, "Shine file failed to save");
+                err
+            });
     }
 
     pub async fn sync_shine_bag(&self) {
@@ -832,7 +829,7 @@ impl Server {
         let mut content = String::from("");
         file.read_to_string(&mut content).await?;
 
-        let deserialized = serde_json::from_str(&content).unwrap();
+        let deserialized = serde_json::from_str(&content).unwrap_or_default();
 
         let mut shines = self.shine_bag.write().await;
 
@@ -859,7 +856,7 @@ impl Server {
         )
         .await
         .into_iter()
-        .filter_map(|v| v);
+        .flatten();
 
         let mut peers = self.peers.write().await;
 
@@ -901,11 +898,11 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
         let mut body_buf = vec![0; header.packet_size];
 
         match reader.read_exact(&mut body_buf).await {
-            Ok(n) if n == 0 => return Err(anyhow!("End of file reached")),
+            Ok(n) if n == 0 => return Err(eyre!("End of file reached")),
             Ok(_) => (),
             Err(e) => {
                 debug!("Error reading header {}", e);
-                return Err(anyhow!(e));
+                return Err(eyre!(e));
             }
         };
 
@@ -914,5 +911,5 @@ async fn receive_packet(reader: &mut ReadHalf<TcpStream>) -> Result<Packet> {
         Bytes::new()
     };
 
-    Ok(header.make_packet(body)?)
+    header.make_packet(body)
 }

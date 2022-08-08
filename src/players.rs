@@ -1,12 +1,12 @@
-use crate::packet::{Content, Packet};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
 use chrono::Duration;
 use futures::future::join_all;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
 use tokio::sync::RwLock;
 use uuid::Uuid;
+
+use crate::packet::{Content, Packet};
 
 const MARIO_SIZE: f32 = 160.;
 const MARIO_SIZE_2D: f32 = 180.;
@@ -29,7 +29,7 @@ pub struct Player {
     pub last_game_packet: Option<Packet>,
     pub last_position: Option<Content>,
     // id, is_grand
-    pub shine_sync: HashSet<(i32, bool)>,
+    pub shine_sync: HashSet<i32>,
     pub loaded_save: bool,
     pub time: Duration,
 }
@@ -54,6 +54,7 @@ impl Default for Player {
 }
 
 impl Player {
+    #[inline]
     pub fn new(id: Uuid, name: String) -> Self {
         Self {
             id,
@@ -73,10 +74,12 @@ impl Player {
 }
 
 impl Player {
+    #[inline]
     pub fn set_costume(&mut self, body: String, cap: String) {
         self.costume = Some(Costume { body, cap });
     }
 
+    #[inline(always)]
     pub fn size(&self) -> f32 {
         if self.is_2d {
             MARIO_SIZE_2D
@@ -106,6 +109,7 @@ pub struct Players {
 }
 
 impl Players {
+    #[inline]
     pub fn new() -> Self {
         Self {
             players: RwLock::default(),
@@ -116,27 +120,27 @@ impl Players {
     pub async fn get(&self, id: &Uuid) -> Option<SharedPlayer> {
         let players = self.players.read().await;
 
-        players.get(id).map(|p| p.clone())
+        players.get(id).cloned()
     }
 
     pub async fn all(&self) -> Vec<SharedPlayer> {
         let players = self.players.read().await;
 
-        players.values().map(|p| p.clone()).collect()
+        players.values().cloned().collect()
     }
 
     pub async fn all_from_ids(&self, ids: Vec<Uuid>) -> Vec<SharedPlayer> {
         let players = self.players.read().await;
 
         ids.iter()
-            .filter_map(|id| players.get(id).map(|p| p.clone()))
+            .filter_map(|id| players.get(id).cloned())
             .collect()
     }
 
     pub async fn all_ids(&self) -> Vec<Uuid> {
         let players = self.players.read().await;
 
-        players.keys().map(|k| k.clone()).collect()
+        players.keys().copied().collect()
     }
 
     pub async fn all_ids_and_names(&self) -> Vec<(Uuid, String)> {
@@ -145,7 +149,7 @@ impl Players {
         let players = join_all(
             players
                 .iter()
-                .map(|(id, p)| async { (id.clone(), p.read().await) }),
+                .map(|(id, p)| async { (*id, p.read().await) }),
         )
         .await;
 
@@ -161,7 +165,7 @@ impl Players {
         names
             .iter()
             .find(|(_, name)| name.to_lowercase() == username.to_lowercase())
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| *id)
     }
 
     // No idea when to remove a player for now
@@ -186,9 +190,9 @@ impl Players {
         let mut players = self.players.write().await;
         let mut names = self.names.write().await;
 
-        let id = player.id.clone();
+        let id = player.id;
 
-        names.insert(id.clone(), player.name.clone());
+        names.insert(id, player.name.clone());
 
         let player = Arc::new(RwLock::new(player));
 
