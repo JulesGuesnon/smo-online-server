@@ -60,7 +60,7 @@ cd smo-online-server
 6. Open `fly.toml` file in a text editor, and makes it look like that
 
 ```toml
-# fly.toml file generated for smo-online-server on 2022-08-01T13:22:37+02:00
+# fly.toml file generated for <app-name> on <date>
 
 app = "<app-name>"
 kill_signal = "SIGINT"
