@@ -62,3 +62,4 @@ Thanks a lot to:
 
 - [CraftyBoss](https://github.com/CraftyBoss) for the mod
 - [Sanae6](https://github.com/Sanae6) for the official server
+- [lolPants](https://github.com/lolPants) for the contribution
