@@ -1,7 +1,6 @@
 target
 Dockerfile
 .gitignore
-.git
 .dockerignore
 docs
 fly.toml
